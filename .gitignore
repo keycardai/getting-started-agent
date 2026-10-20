@@ -4,3 +4,13 @@
 
 # LangGraph
 .langgraph_api/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local credentials written by `keycard new agent`
+.env
