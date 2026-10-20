@@ -5,35 +5,41 @@ from __future__ import annotations
 import asyncio
 import sys
 
+import anthropic
 import httpx
 from dotenv import load_dotenv
 from keycardai.oauth import OAuthError
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage
 
 from .config import Settings, SettingsError
 from .graph import build_graph
 from .keycard import connect
 
-MAX_BODY_CHARS = 2000
+QUESTION = "What's open in PagerDuty right now?"
 
 
-async def main(settings: Settings) -> int:
+async def main(settings: Settings) -> None:
+    model = ChatAnthropic(model=settings.model, api_key=settings.anthropic_api_key, max_tokens=1024)
     async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
-        result = await build_graph(settings, keycard, http).ainvoke({})
-    print(f"GET {settings.dependency_request_url} -> {result['status_code']}")
-    print(result["body"][:MAX_BODY_CHARS])
-    return 0 if result["status_code"] < 400 else 1
+        result = await build_graph(settings, keycard, http, model).ainvoke(
+            {"messages": [HumanMessage(QUESTION)]}
+        )
+    print(result["messages"][-1].text)
 
 
 def run() -> None:
     load_dotenv()
     try:
-        sys.exit(asyncio.run(main(Settings.from_env())))
+        asyncio.run(main(Settings.from_env()))
     except SettingsError as e:
         sys.exit(str(e))
     except OAuthError as e:
         sys.exit(f"Keycard request failed: {e}")
     except httpx.HTTPError as e:
-        sys.exit(f"Dependency request failed: {e}")
+        sys.exit(f"PagerDuty request failed: {e}")
+    except anthropic.APIError as e:
+        sys.exit(f"Model request failed: {e}")
 
 
 if __name__ == "__main__":

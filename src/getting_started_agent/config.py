@@ -12,19 +12,17 @@ REQUIRED = {
     "client_id": "KEYCARD_CLIENT_ID",
     "client_secret": "KEYCARD_CLIENT_SECRET",
     "resource_url": "KEYCARD_RESOURCE_URL",
-    "dependency_url": "KEYCARD_DEPENDENCY_URL",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
 }
-REQUEST_URL = "DEPENDENCY_REQUEST_URL"
+DEPENDENCY = "KEYCARD_DEPENDENCY_URL"
+PAGERDUTY_URL = "https://api.pagerduty.com"
+MODEL = "ANTHROPIC_MODEL"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 class SettingsError(RuntimeError):
     pass
-
-
-def _origin(url: str) -> tuple[str, str]:
-    parts = urlsplit(url)
-    return parts.scheme, parts.netloc
 
 
 def _require_https(name: str, url: str) -> None:
@@ -41,17 +39,13 @@ class Settings:
     client_id: str
     client_secret: str = field(repr=False)
     resource_url: str
-    dependency_url: str
-    dependency_request_url: str
+    anthropic_api_key: str = field(repr=False)
+    dependency_url: str = PAGERDUTY_URL
+    model: str = DEFAULT_MODEL
 
     def __post_init__(self) -> None:
         _require_https(REQUIRED["zone_url"], self.zone_url)
-        _require_https(REQUEST_URL, self.dependency_request_url)
-        if _origin(self.dependency_request_url) != _origin(self.dependency_url):
-            raise SettingsError(
-                f"{REQUEST_URL} must be on the same origin as {REQUIRED['dependency_url']}, "
-                "so the exchanged token is only sent to the resource it was issued for."
-            )
+        _require_https(DEPENDENCY, self.dependency_url)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -60,10 +54,12 @@ class Settings:
         if missing:
             raise SettingsError(
                 f"Missing settings: {', '.join(missing)}. "
-                "Run `keycard new agent` in this directory, or copy .env.example to .env."
+                "`keycard new agent` writes the KEYCARD_* ones to .env; "
+                "add your ANTHROPIC_API_KEY there too (see .env.example)."
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
         return cls(
             **values,
-            dependency_request_url=env.get(REQUEST_URL) or values["dependency_url"],
+            dependency_url=env.get(DEPENDENCY) or PAGERDUTY_URL,
+            model=env.get(MODEL) or DEFAULT_MODEL,
         )

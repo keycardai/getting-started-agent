@@ -1,36 +1,34 @@
-"""The agent graph: call the dependency directly, as the agent itself."""
+"""The agent graph: one tool that reads PagerDuty as the agent itself."""
 
 from __future__ import annotations
 
-from typing import TypedDict
+import json
 
 import httpx
-from langgraph.graph import END, START, StateGraph
+from langchain.agents import create_agent
+from langchain.tools import tool
+from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
+from . import pagerduty
 from .config import Settings
 from .keycard import TokenClient, dependency_token
 
-
-class AgentState(TypedDict, total=False):
-    # Tokens stay out of graph state: state is checkpointed and traced.
-    status_code: int
-    body: str
+SYSTEM_PROMPT = (
+    "You are an on-call assistant. Call list_open_incidents once, then summarize what is "
+    "open in PagerDuty, most urgent first, one line per incident. If nothing is open, say so."
+)
 
 
 def build_graph(
-    settings: Settings, keycard: TokenClient, http: httpx.AsyncClient
+    settings: Settings, keycard: TokenClient, http: httpx.AsyncClient, model: BaseChatModel
 ) -> CompiledStateGraph:
-    async def call_dependency(state: AgentState) -> AgentState:
-        token = await dependency_token(keycard, settings)
-        response = await http.get(
-            settings.dependency_request_url,
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        return {"status_code": response.status_code, "body": response.text}
+    @tool
+    async def list_open_incidents() -> str:
+        """List the PagerDuty incidents that are triggered or acknowledged."""
+        # The key is fetched per call and stays in this frame: graph state is
+        # checkpointed and traced, so only the incidents go back to the model.
+        api_key = await dependency_token(keycard, settings)
+        return json.dumps(await pagerduty.open_incidents(http, settings.dependency_url, api_key))
 
-    graph = StateGraph(AgentState)
-    graph.add_node("call_dependency", call_dependency)
-    graph.add_edge(START, "call_dependency")
-    graph.add_edge("call_dependency", END)
-    return graph.compile()
+    return create_agent(model, tools=[list_open_incidents], system_prompt=SYSTEM_PROMPT)
