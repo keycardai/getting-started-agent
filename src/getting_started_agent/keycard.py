@@ -12,7 +12,6 @@ Each request appears in the zone's activity log with the agent as the actor.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
 
 from keycardai.oauth import AsyncClient, BasicAuth, TokenResponse, TokenType
@@ -26,12 +25,6 @@ class TokenClient(Protocol):
     async def exchange_token(self, **kwargs) -> TokenResponse: ...
 
 
-@dataclass(frozen=True)
-class AgentTokens:
-    own: TokenResponse
-    dependency: TokenResponse
-
-
 def connect(settings: Settings) -> AsyncClient:
     """An OAuth client for the zone, authenticating as the agent's application."""
     return AsyncClient(
@@ -40,11 +33,11 @@ def connect(settings: Settings) -> AsyncClient:
     )
 
 
-async def authenticate_as_self(client: TokenClient, settings: Settings) -> AgentTokens:
+async def dependency_token(client: TokenClient, settings: Settings) -> str:
     own = await client.client_credentials_grant(resource=settings.resource_url)
-    dependency = await client.exchange_token(
+    exchanged = await client.exchange_token(
         subject_token=own.access_token,
         subject_token_type=TokenType.ACCESS_TOKEN,
         resource=settings.dependency_url,
     )
-    return AgentTokens(own=own, dependency=dependency)
+    return exchanged.access_token

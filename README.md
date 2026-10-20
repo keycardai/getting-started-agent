@@ -21,6 +21,10 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ## What happens on `make dev`
 
+The graph (`src/getting_started_agent/graph.py`) has one node,
+`call_dependency`, which uses the Keycard calls in
+`src/getting_started_agent/keycard.py`:
+
 1. **Authenticate as itself.** A `client_credentials` grant with
    `resource=KEYCARD_RESOURCE_URL` (the agent's own resource), using the
    agent's client ID and secret.
@@ -29,9 +33,8 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 3. **Call the dependency.** `GET DEPENDENCY_REQUEST_URL` with the exchanged
    token. The process never holds the dependency's own credential.
 
-The graph is `authenticate -> call_dependency` in
-`src/getting_started_agent/graph.py`; the Keycard calls are in
-`src/getting_started_agent/keycard.py`.
+Tokens never enter graph state, so they are not checkpointed or sent to
+tracing.
 
 ## Configuration
 
@@ -45,6 +48,10 @@ to `.env` and fill it in:
 | `KEYCARD_RESOURCE_URL` | The agent's own resource |
 | `KEYCARD_DEPENDENCY_URL` | The resource the agent depends on |
 | `DEPENDENCY_REQUEST_URL` | Optional URL to call; defaults to `KEYCARD_DEPENDENCY_URL` |
+
+URLs must be `https://` (plain `http://` is allowed only for `localhost`), and
+`DEPENDENCY_REQUEST_URL` must share an origin with `KEYCARD_DEPENDENCY_URL`, so
+the exchanged token is only sent where it was meant to go.
 
 ## Development
 

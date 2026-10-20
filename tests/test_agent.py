@@ -2,9 +2,9 @@ import httpx
 import pytest
 from keycardai.oauth import TokenResponse, TokenType
 
-from getting_started_agent.config import MissingSettingsError, Settings
+from getting_started_agent.config import REQUIRED, Settings, SettingsError
 from getting_started_agent.graph import build_graph
-from getting_started_agent.keycard import authenticate_as_self
+from getting_started_agent.keycard import dependency_token
 
 ENV = {
     "KEYCARD_ZONE_URL": "https://zone.keycard.test",
@@ -28,39 +28,58 @@ class FakeKeycard:
         return TokenResponse(access_token="dependency-token")
 
 
-def test_settings_report_every_missing_key():
-    with pytest.raises(MissingSettingsError) as e:
-        Settings.from_env({"KEYCARD_ZONE_URL": "https://zone.keycard.test"})
-    assert e.value.missing == [
-        "KEYCARD_CLIENT_ID",
-        "KEYCARD_CLIENT_SECRET",
-        "KEYCARD_RESOURCE_URL",
-        "KEYCARD_DEPENDENCY_URL",
-    ]
+def test_missing_settings_are_all_reported():
+    with pytest.raises(SettingsError) as e:
+        Settings.from_env({})
+    assert all(var in str(e.value) for var in REQUIRED.values())
 
 
 def test_request_url_defaults_to_dependency():
-    assert Settings.from_env(ENV).dependency_request_url == "https://api.dependency.test"
-    custom = Settings.from_env({**ENV, "DEPENDENCY_REQUEST_URL": "https://api.dependency.test/me"})
-    assert custom.dependency_request_url == "https://api.dependency.test/me"
+    assert Settings.from_env(ENV).dependency_request_url == ENV["KEYCARD_DEPENDENCY_URL"]
+
+
+def test_client_secret_is_not_in_repr():
+    assert "secret" not in repr(Settings.from_env(ENV)).replace("client_secret", "")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"KEYCARD_ZONE_URL": "http://zone.keycard.test"},
+        {"KEYCARD_DEPENDENCY_URL": "http://api.dependency.test"},
+        {"DEPENDENCY_REQUEST_URL": "https://elsewhere.test/me"},
+    ],
+    ids=["plaintext-zone", "plaintext-dependency", "foreign-request-origin"],
+)
+def test_rejects_settings_that_could_leak_credentials(overrides):
+    with pytest.raises(SettingsError):
+        Settings.from_env({**ENV, **overrides})
+
+
+def test_allows_plain_http_to_loopback():
+    local = {
+        "KEYCARD_ZONE_URL": "http://localhost:8080",
+        "KEYCARD_DEPENDENCY_URL": "http://127.0.0.1:9000",
+        "DEPENDENCY_REQUEST_URL": "http://127.0.0.1:9000/me",
+    }
+    assert Settings.from_env({**ENV, **local}).dependency_request_url == "http://127.0.0.1:9000/me"
 
 
 async def test_authenticates_as_self_then_exchanges_for_dependency():
     keycard = FakeKeycard()
-    tokens = await authenticate_as_self(keycard, Settings.from_env(ENV))
 
+    assert await dependency_token(keycard, Settings.from_env(ENV)) == "dependency-token"
     assert keycard.calls == [
-        ("client_credentials", {"resource": "https://agent.example.com"}),
+        ("client_credentials", {"resource": ENV["KEYCARD_RESOURCE_URL"]}),
         (
             "token_exchange",
             {
                 "subject_token": "own-token",
                 "subject_token_type": TokenType.ACCESS_TOKEN,
-                "resource": "https://api.dependency.test",
+                "resource": ENV["KEYCARD_DEPENDENCY_URL"],
             },
         ),
     ]
-    assert tokens.dependency.access_token == "dependency-token"
 
 
 async def test_graph_calls_dependency_with_exchanged_token():
@@ -71,10 +90,8 @@ async def test_graph_calls_dependency_with_exchanged_token():
         return httpx.Response(200, text="hello agent")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        graph = build_graph(Settings.from_env(ENV), FakeKeycard(), http)
-        result = await graph.ainvoke({})
+        result = await build_graph(Settings.from_env(ENV), FakeKeycard(), http).ainvoke({})
 
-    assert result["status_code"] == 200
-    assert result["body"] == "hello agent"
-    assert str(seen[0].url) == "https://api.dependency.test"
+    assert result == {"status_code": 200, "body": "hello agent"}
+    assert str(seen[0].url) == ENV["KEYCARD_DEPENDENCY_URL"]
     assert seen[0].headers["Authorization"] == "Bearer dependency-token"
