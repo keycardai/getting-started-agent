@@ -7,7 +7,7 @@ dev:
 	uv run getting-started-agent
 
 watch:
-	uv run getting-started-agent --watch --interval 15
+	uv run getting-started-agent --watch
 
 test:
 	uv run pytest

@@ -92,11 +92,13 @@ def test_optional_settings_have_defaults():
     assert Settings.from_env({**ENV, "ANTHROPIC_MODEL": "claude-x"}).model == "claude-x"
 
 
-def test_dependency_url_echoing_the_agent_resource_falls_back_to_pagerduty():
+def test_dependency_url_echoing_the_agent_resource_falls_back_to_pagerduty(capsys):
     # `keycard new agent` can write the agent's own resource as the dependency;
     # that is not the PagerDuty resource, so treat it as unset and fall back.
-    echoed = {**ENV, "KEYCARD_DEPENDENCY_URL": ENV["KEYCARD_RESOURCE_URL"]}
-    assert Settings.from_env(echoed).dependency_url == PAGERDUTY_URL
+    for echo in (ENV["KEYCARD_RESOURCE_URL"], ENV["KEYCARD_RESOURCE_URL"] + "/"):
+        echoed = {**ENV, "KEYCARD_DEPENDENCY_URL": echo}
+        assert Settings.from_env(echoed).dependency_url == PAGERDUTY_URL
+        assert "is the agent's own resource" in capsys.readouterr().err
 
 
 def test_secrets_are_not_in_repr():
@@ -232,13 +234,26 @@ def run_failing(monkeypatch):
     return run_with
 
 
-@pytest.mark.parametrize("status", [401, 403, 404])
-def test_unwired_dependency_is_a_clean_exit(run_failing, capsys, status):
+def test_unwired_dependency_is_a_clean_exit(run_failing, capsys):
+    run_failing(status_error(404))
+
+    out = capsys.readouterr().out
+    assert "the identity flow worked" in out
+    assert "this is expected" in out
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_rejected_key_is_a_clean_exit_that_points_at_the_key(run_failing, capsys, status):
     run_failing(status_error(status))
 
     out = capsys.readouterr().out
     assert "the identity flow worked" in out
-    assert f"returned {status}" in out
+    assert f"PagerDuty rejected the key with {status}" in out
+    assert "expected" not in out
+
+
+def test_ctrl_c_is_a_clean_stop(run_failing):
+    run_failing(KeyboardInterrupt())
 
 
 def test_missing_setting_is_a_clean_exit(run_failing, monkeypatch, capsys):
@@ -281,3 +296,34 @@ def test_watch_rejects_intervals_that_would_flood_or_stall(monkeypatch, capsys, 
         main.run()
     assert exit_info.value.code == 2
     assert "--interval: must be at least 5 seconds" in capsys.readouterr().err
+
+
+async def test_watch_survives_a_bad_cycle_with_a_friendly_line(monkeypatch, capsys):
+    answers = iter([status_error(500), {"messages": [AIMessage("All quiet.")]}])
+
+    class Graph:
+        async def ainvoke(self, _):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    class Stop(Exception):
+        pass
+
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise Stop
+
+    monkeypatch.setattr(main.asyncio, "sleep", sleep)
+    with pytest.raises(Stop):
+        await main.watch(Graph(), 10)
+
+    out = capsys.readouterr().out
+    assert sleeps == [10, 10]
+    assert "PagerDuty returned 500" in out
+    assert "All quiet." in out
+    assert "mozilla" not in out

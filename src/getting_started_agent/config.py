@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -70,16 +71,18 @@ class Settings:
                 f"add the rest there too, {RETRY}"
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
-        # `keycard new agent` can write KEYCARD_DEPENDENCY_URL as the agent's own
-        # resource (its first dependency), which is not the PagerDuty resource.
-        # Treat an empty value — or one that just echoes KEYCARD_RESOURCE_URL — as
-        # "unset" and fall back to PagerDuty, so a re-enroll can't silently point
-        # the read at the agent itself (which 404s on /incidents).
-        dependency = env.get(DEPENDENCY)
-        if not dependency or dependency == values["resource_url"]:
-            dependency = PAGERDUTY_URL
+        # `keycard new agent` can write the agent's own resource here. That's what the agent
+        # *is*, not what it reads, so say so and read PagerDuty instead.
+        dependency = env.get(DEPENDENCY, "").rstrip("/")
+        if dependency == values["resource_url"].rstrip("/"):
+            print(
+                f"`{DEPENDENCY}` is the agent's own resource, not a dependency; "
+                f"reading {PAGERDUTY_URL} instead.",
+                file=sys.stderr,
+            )
+            dependency = ""
         return cls(
             **values,
-            dependency_url=dependency,
+            dependency_url=dependency or PAGERDUTY_URL,
             model=env.get(MODEL) or DEFAULT_MODEL,
         )

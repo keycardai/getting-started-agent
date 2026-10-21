@@ -30,6 +30,7 @@ def build_graph(
         # The key is fetched per call and stays in this frame: graph state is
         # checkpointed and traced, so only the incidents go back to the model.
         api_key = await dependency_token(keycard, settings)
+        # PagerDuty's text is untrusted input to the model; this tool only reads.
         return json.dumps(await pagerduty.open_incidents(http, settings.dependency_url, api_key))
 
     return create_agent(model, tools=[list_open_incidents], system_prompt=SYSTEM_PROMPT)

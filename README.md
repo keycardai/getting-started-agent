@@ -20,7 +20,7 @@ Each run shows up in your zone's activity log with the agent as the actor.
 In localdev nothing real sits behind the PagerDuty resource yet, so the run
 stops after the token exchange and says so; that's expected.
 
-`make watch` keeps it running: the agent re-checks on an interval (every 15s;
+`make watch` keeps it running: the agent re-checks on an interval (every 10s;
 `--interval SECONDS` to change), waking, reading, and settling on a loop until
 you Ctrl-C. Every cycle re-authenticates and re-exchanges, so each read is its
 own entry in the activity log — the "background agent" rhythm, made visible.

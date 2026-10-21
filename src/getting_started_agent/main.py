@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from keycardai.oauth import OAuthError
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
+from langgraph.graph.state import CompiledStateGraph
 
 from .config import Settings, SettingsError
 from .graph import build_graph
@@ -22,18 +23,77 @@ from .keycard import connect
 QUESTION = "What's open in PagerDuty right now?"
 # Room for the one-line-per-incident summary at pagerduty.MAX_INCIDENTS.
 MAX_TOKENS = 8192
-# PagerDuty answering these after the exchange means the identity flow worked
-# but nothing real sits behind the dependency yet, as in localdev.
-DEPENDENCY_NOT_WIRED = {401, 403, 404}
-
-# Errors worth surviving in --watch mode: one bad cycle (a transient PagerDuty,
-# model, or token hiccup) should print and let the next cycle try again, rather
-# than tearing down the whole watcher. A one-shot run lets them propagate so the
-# exit code reflects the failure.
-CYCLE_ERRORS = (OAuthError, httpx.HTTPError, anthropic.APIError)
 # Each --watch cycle is a Keycard grant, an exchange and a model call on the
-# user's key, so don't let a typo turn it into a tight loop.
+# user's key, so keep it slow enough to read and don't let a typo make it a tight loop.
+DEFAULT_INTERVAL = 10.0
 MIN_INTERVAL = 5.0
+IDENTITY_WORKED = "Authenticated to Keycard and exchanged a token — the identity flow worked."
+
+
+def explain(error: Exception) -> tuple[bool, str] | None:
+    """(setup_incomplete, one friendly line) for a known failure; None for a real bug."""
+    if isinstance(error, SettingsError):
+        return True, str(error)
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        if status == 404:
+            return True, (
+                f"{IDENTITY_WORKED} PagerDuty returned 404, so there were no incidents to read. "
+                "In localdev nothing is wired behind `KEYCARD_DEPENDENCY_URL` yet, "
+                "so this is expected."
+            )
+        if status in (401, 403):
+            return True, (
+                f"{IDENTITY_WORKED} PagerDuty rejected the key with {status}: check the "
+                "PagerDuty API key stored on that resource in Keycard."
+            )
+        return False, f"PagerDuty returned {status}. Try again in a minute."
+    if isinstance(error, httpx.RequestError):
+        host = error.request.url.host
+        return False, f"Couldn't reach {host}. Check `KEYCARD_DEPENDENCY_URL` in `.env`."
+    if isinstance(error, OAuthError):
+        return False, (
+            "Keycard didn't issue a token. Check `KEYCARD_ZONE_URL`, `KEYCARD_CLIENT_ID` "
+            "and `KEYCARD_CLIENT_SECRET` in `.env`."
+        )
+    if isinstance(error, anthropic.APIError):
+        return False, (
+            "The model request failed. Check `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` in `.env`."
+        )
+    return None
+
+
+async def ask(graph: CompiledStateGraph) -> str:
+    result = await graph.ainvoke({"messages": [HumanMessage(QUESTION)]})
+    return result["messages"][-1].text
+
+
+async def watch(graph: CompiledStateGraph, interval: float) -> None:
+    """Ask on a loop until Ctrl-C. Each cycle is its own grant and exchange in the activity log;
+    a cycle that fails for a known reason prints why and the next one tries again."""
+    print(f"Watching PagerDuty every {interval:g}s. Ctrl-C to stop.", flush=True)
+    while True:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        try:
+            print(f"[{stamp}] {await ask(graph)}", flush=True)
+        except Exception as e:
+            if (explained := explain(e)) is None:
+                raise
+            print(f"[{stamp}] {explained[1]}", flush=True)
+        await asyncio.sleep(interval)
+
+
+async def main(settings: Settings, *, interval: float | None = None) -> None:
+    """Ask once, or every `interval` seconds when watching."""
+    model = ChatAnthropic(
+        model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
+    )
+    async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
+        graph = build_graph(settings, keycard, http, model)
+        if interval is None:
+            print(await ask(graph))
+        else:
+            await watch(graph, interval)
 
 
 def _interval(value: str) -> float:
@@ -43,35 +103,6 @@ def _interval(value: str) -> float:
     return seconds
 
 
-async def _ask(graph) -> str:
-    """One wake-act-settle cycle: ask the agent the question, return its answer."""
-    result = await graph.ainvoke({"messages": [HumanMessage(QUESTION)]})
-    return result["messages"][-1].text
-
-
-async def main(settings: Settings, *, watch: bool = False, interval: float = 60.0) -> None:
-    model = ChatAnthropic(
-        model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
-    )
-    async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
-        graph = build_graph(settings, keycard, http, model)
-        if not watch:
-            # One-shot: run once and exit; errors propagate to `run`.
-            print(await _ask(graph))
-            return
-        # Watch: wake, read, settle, wait — on a loop until Ctrl-C. Each cycle
-        # re-runs the client-credentials grant and token exchange, so every read
-        # is freshly authorized and lands in the zone's activity log on its own.
-        print(f"Watching PagerDuty every {interval:g}s. Ctrl-C to stop.", flush=True)
-        while True:
-            stamp = datetime.now().strftime("%H:%M:%S")
-            try:
-                print(f"[{stamp}] {await _ask(graph)}", flush=True)
-            except CYCLE_ERRORS as e:
-                print(f"[{stamp}] check failed: {e}", flush=True)
-            await asyncio.sleep(interval)
-
-
 def run() -> None:
     """Setup-incomplete states exit 0 with a nudge; other known failures exit 1 with one line."""
     parser = argparse.ArgumentParser(
@@ -79,46 +110,28 @@ def run() -> None:
         description="Ask the agent what's open in PagerDuty — once, or on a loop with --watch.",
     )
     parser.add_argument(
-        "--watch",
-        action="store_true",
-        help="Keep running: re-check on an interval instead of once (Ctrl-C to stop).",
+        "--watch", action="store_true", help="Keep re-checking until Ctrl-C instead of once."
     )
     parser.add_argument(
         "--interval",
         type=_interval,
-        default=60.0,
+        default=DEFAULT_INTERVAL,
         metavar="SECONDS",
-        help="Seconds between checks in --watch mode (default: 60).",
+        help=f"Seconds between checks with --watch (default: {DEFAULT_INTERVAL:g}).",
     )
     args = parser.parse_args()
     load_dotenv()
     try:
-        asyncio.run(main(Settings.from_env(), watch=args.watch, interval=args.interval))
+        asyncio.run(main(Settings.from_env(), interval=args.interval if args.watch else None))
     except KeyboardInterrupt:
-        pass  # Ctrl-C out of --watch is a clean stop, not an error.
-    except SettingsError as e:
-        print(e)
-    except httpx.HTTPStatusError as e:
-        status = e.response.status_code
-        if status not in DEPENDENCY_NOT_WIRED:
-            sys.exit(f"PagerDuty returned {status}. Try `make dev` again in a minute.")
-        print(
-            "Authenticated to Keycard and exchanged a token — the identity flow worked. "
-            f"The dependency returned {status}, so there were no incidents to read. "
-            "In localdev there's no PagerDuty wired behind `KEYCARD_DEPENDENCY_URL` yet, "
-            "so this is expected — nothing's broken."
-        )
-    except httpx.RequestError as e:
-        sys.exit(f"Couldn't reach {e.request.url.host}. Check `KEYCARD_DEPENDENCY_URL` in `.env`.")
-    except OAuthError:
-        sys.exit(
-            "Keycard didn't issue a token. Check `KEYCARD_ZONE_URL`, `KEYCARD_CLIENT_ID` "
-            "and `KEYCARD_CLIENT_SECRET` in `.env`."
-        )
-    except anthropic.APIError:
-        sys.exit(
-            "The model request failed. Check `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` in `.env`."
-        )
+        pass  # Ctrl-C out of --watch is a clean stop.
+    except Exception as e:
+        if (explained := explain(e)) is None:
+            raise
+        setup_incomplete, message = explained
+        if not setup_incomplete:
+            sys.exit(message)
+        print(message)
 
 
 if __name__ == "__main__":
