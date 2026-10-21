@@ -16,17 +16,21 @@ make dev
 ```
 
 `make dev` keeps the agent running: it asks what's open in PagerDuty every 15s
-until you Ctrl-C. A missing token or dependency prints and retries, so once you
-add the PagerDuty resource in Console the next cycle picks it up. Each cycle
-re-authenticates and shows up in your zone's activity log with the agent as the
-actor. In localdev nothing real sits behind the PagerDuty resource yet, so a
-cycle may say the identity flow worked and there were no incidents; that's
+until you Ctrl-C (`make watch` is the same). Each cycle re-authenticates and
+re-exchanges, so each read is its own entry in your zone's activity log with
+the agent as the actor: the "background agent" rhythm, made visible.
+
+A cycle that fails, e.g. because the PagerDuty resource isn't in Console yet,
+prints why and the next one tries again, so adding the resource is picked up
+on the next cycle. A missing `.env` setting stops it at startup with a note on
+what to add. In localdev nothing real sits behind the PagerDuty resource yet,
+so a cycle says the identity flow worked and there were no incidents; that's
 expected.
 
-`make watch` keeps it running: the agent re-checks on an interval (every 10s;
-`--interval SECONDS` to change), waking, reading, and settling on a loop until
-you Ctrl-C. Every cycle re-authenticates and re-exchanges, so each read is its
-own entry in the activity log — the "background agent" rhythm, made visible.
+Every cycle makes at least one model call on your `ANTHROPIC_API_KEY`, even
+when the PagerDuty read fails: about 240 an hour at 15s. Use
+`--interval SECONDS` (5 or more) to slow it down, or
+`uv run getting-started-agent` to ask once and exit.
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 

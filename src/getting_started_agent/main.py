@@ -25,7 +25,7 @@ QUESTION = "What's open in PagerDuty right now?"
 MAX_TOKENS = 8192
 # Each --watch cycle is a Keycard grant, an exchange and a model call on the
 # user's key, so keep it slow enough to read and don't let a typo make it a tight loop.
-DEFAULT_INTERVAL = 10.0
+DEFAULT_INTERVAL = 15.0
 MIN_INTERVAL = 5.0
 IDENTITY_WORKED = "Authenticated to Keycard and exchanged a token — the identity flow worked."
 
