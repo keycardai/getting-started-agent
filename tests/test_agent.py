@@ -16,7 +16,7 @@ from getting_started_agent.config import (
     SettingsError,
 )
 from getting_started_agent.graph import build_graph
-from getting_started_agent.keycard import dependency_token
+from getting_started_agent.keycard import DependencyAccessError, dependency_token
 from getting_started_agent.pagerduty import MAX_INCIDENTS, PAGE_SIZE
 
 ENV = {
@@ -150,6 +150,23 @@ async def test_authenticates_as_self_then_exchanges_for_dependency():
     ]
 
 
+async def test_denied_exchange_is_reported_as_a_missing_dependency():
+    # The identity grant succeeds; only the exchange is denied, which is what
+    # happens before the dependency is added in the console.
+    class NoDependency(FakeKeycard):
+        async def exchange_token(self, **kwargs) -> TokenResponse:
+            self.calls.append(("token_exchange", kwargs))
+            raise OAuthError("access_denied: no such dependency")
+
+    keycard = NoDependency()
+    with pytest.raises(DependencyAccessError) as e:
+        await dependency_token(keycard, Settings.from_env(ENV))
+
+    assert e.value.dependency_url == ENV["KEYCARD_DEPENDENCY_URL"]
+    # It got as far as the exchange, so the client-credentials grant ran first.
+    assert [name for name, _ in keycard.calls] == ["client_credentials", "token_exchange"]
+
+
 async def test_graph_reads_open_incidents_with_the_exchanged_key():
     seen: list[httpx.Request] = []
 
@@ -245,6 +262,15 @@ def test_unwired_dependency_is_a_clean_exit(run_failing, capsys):
     out = capsys.readouterr().out
     assert "the identity flow worked" in out
     assert "this is expected" in out
+
+
+def test_missing_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing, capsys):
+    run_failing(DependencyAccessError(ENV["KEYCARD_DEPENDENCY_URL"]))
+
+    out = capsys.readouterr().out
+    assert "Authenticated to Keycard as the agent" in out
+    assert "no dependency" in out
+    assert ENV["KEYCARD_DEPENDENCY_URL"] in out
 
 
 @pytest.mark.parametrize("status", [401, 403])
