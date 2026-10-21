@@ -402,6 +402,7 @@ name = "getting-started-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anthropic" },
     { name = "httpx" },
     { name = "keycardai-oauth" },
     { name = "langchain" },
@@ -419,6 +420,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", specifier = ">=1.16,<2.0" },
     { name = "httpx", specifier = ">=0.28,<1.0" },
     { name = "keycardai-oauth", specifier = ">=0.33.1,<0.34" },
     { name = "langchain", specifier = "==1.4.6" },
