@@ -17,6 +17,8 @@ make dev
 
 `make dev` asks the agent what's open in PagerDuty and prints its summary. Each
 run shows up in your zone's activity log with the agent as the actor.
+In localdev nothing real sits behind the PagerDuty resource yet, so the run
+stops after the token exchange and says so; that's expected.
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
@@ -33,7 +35,7 @@ Keycard calls in `src/getting_started_agent/keycard.py`:
    the PagerDuty resource (`KEYCARD_DEPENDENCY_URL`). PagerDuty is backed by a vaulted API key, so the
    exchanged token is that key.
 3. **Read PagerDuty.** `GET {KEYCARD_DEPENDENCY_URL}/incidents` for triggered
-   and acknowledged incidents, sent as `Authorization: Token token=<key>`. The
+   and acknowledged incidents, page by page up to 200, sent as `Authorization: Token token=<key>`. The
    key lives in the zone, not in `.env`.
 
 The model then summarizes the incidents. The key never enters graph state, so

@@ -21,8 +21,11 @@ DEFAULT_MODEL = "claude-sonnet-5-5"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
+RETRY = "then run `make dev` again."
+
+
 class SettingsError(RuntimeError):
-    pass
+    """A setup step is missing; the message tells the user how to finish it."""
 
 
 def _require_https(name: str, url: str) -> None:
@@ -30,7 +33,10 @@ def _require_https(name: str, url: str) -> None:
     parts = urlsplit(url)
     if parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS):
         return
-    raise SettingsError(f"{name} must be an https:// URL, got {url!r}.")
+    raise SettingsError(
+        f"`make dev` needs one more thing: `{name}` must be an https:// URL, got {url!r}. "
+        f"Fix it in `.env`, {RETRY}"
+    )
 
 
 @dataclass(frozen=True)
@@ -51,11 +57,17 @@ class Settings:
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         env = os.environ if env is None else env
         missing = [var for var in REQUIRED.values() if not env.get(var)]
-        if missing:
+        if len(missing) == 1:
             raise SettingsError(
-                f"Missing settings: {', '.join(missing)}. "
-                "`keycard new agent` writes the KEYCARD_* ones to .env; "
-                "add your ANTHROPIC_API_KEY there too (see .env.example)."
+                f"`make dev` needs one more thing: `{missing[0]}` isn't set. "
+                f"Add it to `.env`, {RETRY}"
+            )
+        if missing:
+            names = ", ".join(f"`{var}`" for var in missing)
+            raise SettingsError(
+                f"`make dev` needs a few more things: {names} aren't set. "
+                "`keycard new agent` writes the KEYCARD_* ones to `.env`; "
+                f"add the rest there too, {RETRY}"
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
         return cls(

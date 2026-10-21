@@ -1,11 +1,13 @@
 import json
 
+import anthropic
 import httpx
 import pytest
-from keycardai.oauth import TokenResponse, TokenType
+from keycardai.oauth import OAuthError, TokenResponse, TokenType
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from getting_started_agent import main
 from getting_started_agent.config import (
     DEFAULT_MODEL,
     PAGERDUTY_URL,
@@ -15,6 +17,7 @@ from getting_started_agent.config import (
 )
 from getting_started_agent.graph import build_graph
 from getting_started_agent.keycard import dependency_token
+from getting_started_agent.pagerduty import MAX_INCIDENTS, PAGE_SIZE
 
 ENV = {
     "KEYCARD_ZONE_URL": "https://zone.keycard.test",
@@ -68,6 +71,13 @@ async def run_graph(handler) -> dict:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         graph = build_graph(Settings.from_env(ENV), FakeKeycard(), http, scripted_model())
         return await graph.ainvoke({"messages": [HumanMessage("What's open?")]})
+
+
+def status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.pagerduty.test/incidents?statuses[]=triggered")
+    response = httpx.Response(status, request=request)
+    message = f"Client error '{status}' for url '{request.url}'"
+    return httpx.HTTPStatusError(message, request=request, response=response)
 
 
 def test_missing_settings_are_all_reported():
@@ -131,7 +141,7 @@ async def test_graph_reads_open_incidents_with_the_exchanged_key():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, json={"incidents": [INCIDENT], "more": True})
+        return httpx.Response(200, json={"incidents": [INCIDENT], "more": False})
 
     result = await run_graph(handler)
 
@@ -153,7 +163,7 @@ async def test_graph_reads_open_incidents_with_the_exchanged_key():
                 "url": "https://acme.pagerduty.test/incidents/P42",
             }
         ],
-        "more": True,
+        "more": False,
     }
     assert result["messages"][-1].text == "#42 Checkout latency"
     assert not any("pagerduty-key" in str(m.content) for m in result["messages"])
@@ -162,3 +172,94 @@ async def test_graph_reads_open_incidents_with_the_exchanged_key():
 async def test_pagerduty_errors_end_the_run():
     with pytest.raises(httpx.HTTPStatusError):
         await run_graph(lambda request: httpx.Response(401, json={"error": "unauthorized"}))
+
+
+async def test_follows_pages_until_pagerduty_has_no_more():
+    offsets: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offsets.append(int(request.url.params["offset"]))
+        return httpx.Response(200, json={"incidents": [INCIDENT], "more": len(offsets) < 3})
+
+    result = await run_graph(handler)
+
+    assert offsets == [0, 1, 2]
+    [tool_result] = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert json.loads(tool_result.content)["more"] is False
+    assert len(json.loads(tool_result.content)["incidents"]) == 3
+
+
+async def test_stops_paging_at_the_cap_and_says_there_is_more():
+    requested: list[tuple[int, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        requested.append((int(params["offset"]), int(params["limit"])))
+        page = [INCIDENT] * int(params["limit"])
+        return httpx.Response(200, json={"incidents": page, "more": True})
+
+    result = await run_graph(handler)
+
+    assert requested == [(offset, PAGE_SIZE) for offset in range(0, MAX_INCIDENTS, PAGE_SIZE)]
+    [tool_result] = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    content = json.loads(tool_result.content)
+    assert (len(content["incidents"]), content["more"]) == (MAX_INCIDENTS, True)
+
+
+@pytest.fixture
+def run_failing(monkeypatch):
+    """Runs `make dev`'s entry point with `main` raising `error`."""
+    monkeypatch.setattr(main, "load_dotenv", lambda: None)
+    for var, value in ENV.items():
+        monkeypatch.setenv(var, value)
+
+    def run_with(error: Exception) -> None:
+        async def fail(settings):
+            raise error
+
+        monkeypatch.setattr(main, "main", fail)
+        main.run()
+
+    return run_with
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_unwired_dependency_is_a_clean_exit(run_failing, capsys, status):
+    run_failing(status_error(status))
+
+    out = capsys.readouterr().out
+    assert "the identity flow worked" in out
+    assert f"returned {status}" in out
+
+
+def test_missing_setting_is_a_clean_exit(run_failing, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    run_failing(AssertionError("main must not run"))
+
+    assert "`ANTHROPIC_API_KEY` isn't set. Add it to `.env`" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        status_error(500),
+        httpx.ConnectError("boom", request=httpx.Request("GET", "https://api.pagerduty.test/x?y")),
+        OAuthError("invalid_client: raw detail"),
+        anthropic.APIError(
+            "raw detail", httpx.Request("POST", "https://api.anthropic.test"), body=None
+        ),
+    ],
+    ids=["dependency-5xx", "unreachable", "keycard", "model"],
+)
+def test_other_known_failures_exit_1_with_one_friendly_line(run_failing, error):
+    with pytest.raises(SystemExit) as e:
+        run_failing(error)
+
+    message = str(e.value.code)
+    assert "\n" not in message
+    assert not any(raw in message for raw in ("raw detail", "statuses[]", "?y", "mozilla"))
+
+
+def test_unexpected_errors_still_raise(run_failing):
+    with pytest.raises(ValueError):
+        run_failing(ValueError("a real bug"))
