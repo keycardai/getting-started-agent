@@ -17,13 +17,17 @@ from .graph import build_graph
 from .keycard import connect
 
 QUESTION = "What's open in PagerDuty right now?"
+# Room for the one-line-per-incident summary at pagerduty.MAX_INCIDENTS.
+MAX_TOKENS = 8192
 # PagerDuty answering these after the exchange means the identity flow worked
 # but nothing real sits behind the dependency yet, as in localdev.
 DEPENDENCY_NOT_WIRED = {401, 403, 404}
 
 
 async def main(settings: Settings) -> None:
-    model = ChatAnthropic(model=settings.model, api_key=settings.anthropic_api_key, max_tokens=1024)
+    model = ChatAnthropic(
+        model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
+    )
     async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
         result = await build_graph(settings, keycard, http, model).ainvoke(
             {"messages": [HumanMessage(QUESTION)]}
