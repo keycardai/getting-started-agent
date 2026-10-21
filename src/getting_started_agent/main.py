@@ -18,7 +18,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from .config import Settings, SettingsError
 from .graph import build_graph
-from .keycard import connect
+from .keycard import DependencyAccessError, connect
 
 QUESTION = "What's open in PagerDuty right now?"
 # Room for the one-line-per-incident summary at pagerduty.MAX_INCIDENTS.
@@ -34,6 +34,12 @@ def explain(error: Exception) -> tuple[bool, str] | None:
     """(setup_incomplete, one friendly line) for a known failure; None for a real bug."""
     if isinstance(error, SettingsError):
         return True, str(error)
+    if isinstance(error, DependencyAccessError):
+        return True, (
+            "Authenticated to Keycard as the agent, but there's no dependency on "
+            f"{error.dependency_url} to exchange for yet. Add that resource as a "
+            "dependency (and store its API key) in the Keycard console, then try again."
+        )
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         if status == 404:
