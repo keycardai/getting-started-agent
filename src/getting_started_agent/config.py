@@ -70,8 +70,16 @@ class Settings:
                 f"add the rest there too, {RETRY}"
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
+        # `keycard new agent` can write KEYCARD_DEPENDENCY_URL as the agent's own
+        # resource (its first dependency), which is not the PagerDuty resource.
+        # Treat an empty value — or one that just echoes KEYCARD_RESOURCE_URL — as
+        # "unset" and fall back to PagerDuty, so a re-enroll can't silently point
+        # the read at the agent itself (which 404s on /incidents).
+        dependency = env.get(DEPENDENCY)
+        if not dependency or dependency == values["resource_url"]:
+            dependency = PAGERDUTY_URL
         return cls(
             **values,
-            dependency_url=env.get(DEPENDENCY) or PAGERDUTY_URL,
+            dependency_url=dependency,
             model=env.get(MODEL) or DEFAULT_MODEL,
         )

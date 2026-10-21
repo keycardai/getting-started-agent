@@ -38,7 +38,9 @@ async def open_incidents(http: httpx.AsyncClient, api_url: str, api_key: str) ->
                 "offset": len(incidents),
             },
             headers={
-                "Authorization": f"Token token={api_key}",
+                # Vaulted keys can carry stray whitespace from a copy-paste; strip it
+                # so the header is a legal value (httpx rejects a trailing space).
+                "Authorization": f"Token token={api_key.strip()}",
                 "Accept": "application/vnd.pagerduty+json;version=2",
             },
         )

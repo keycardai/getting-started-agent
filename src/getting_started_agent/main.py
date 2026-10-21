@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
+from datetime import datetime
 
 import anthropic
 import httpx
@@ -23,23 +25,66 @@ MAX_TOKENS = 8192
 # but nothing real sits behind the dependency yet, as in localdev.
 DEPENDENCY_NOT_WIRED = {401, 403, 404}
 
+# Errors worth surviving in --watch mode: one bad cycle (a transient PagerDuty,
+# model, or token hiccup) should print and let the next cycle try again, rather
+# than tearing down the whole watcher. A one-shot run lets them propagate so the
+# exit code reflects the failure.
+CYCLE_ERRORS = (OAuthError, httpx.HTTPError, anthropic.APIError)
 
-async def main(settings: Settings) -> None:
+
+async def _ask(graph) -> str:
+    """One wake-act-settle cycle: ask the agent the question, return its answer."""
+    result = await graph.ainvoke({"messages": [HumanMessage(QUESTION)]})
+    return result["messages"][-1].text
+
+
+async def main(settings: Settings, *, watch: bool = False, interval: float = 60.0) -> None:
     model = ChatAnthropic(
         model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
     )
     async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
-        result = await build_graph(settings, keycard, http, model).ainvoke(
-            {"messages": [HumanMessage(QUESTION)]}
-        )
-    print(result["messages"][-1].text)
+        graph = build_graph(settings, keycard, http, model)
+        if not watch:
+            # One-shot: run once and exit; errors propagate to `run`.
+            print(await _ask(graph))
+            return
+        # Watch: wake, read, settle, wait — on a loop until Ctrl-C. Each cycle
+        # re-runs the client-credentials grant and token exchange, so every read
+        # is freshly authorized and lands in the zone's activity log on its own.
+        print(f"Watching PagerDuty every {interval:g}s. Ctrl-C to stop.", flush=True)
+        while True:
+            stamp = datetime.now().strftime("%H:%M:%S")
+            try:
+                print(f"[{stamp}] {await _ask(graph)}", flush=True)
+            except CYCLE_ERRORS as e:
+                print(f"[{stamp}] check failed: {e}", flush=True)
+            await asyncio.sleep(interval)
 
 
 def run() -> None:
     """Setup-incomplete states exit 0 with a nudge; other known failures exit 1 with one line."""
+    parser = argparse.ArgumentParser(
+        prog="getting-started-agent",
+        description="Ask the agent what's open in PagerDuty — once, or on a loop with --watch.",
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Keep running: re-check on an interval instead of once (Ctrl-C to stop).",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=60.0,
+        metavar="SECONDS",
+        help="Seconds between checks in --watch mode (default: 60).",
+    )
+    args = parser.parse_args()
     load_dotenv()
     try:
-        asyncio.run(main(Settings.from_env()))
+        asyncio.run(main(Settings.from_env(), watch=args.watch, interval=args.interval))
+    except KeyboardInterrupt:
+        pass  # Ctrl-C out of --watch is a clean stop, not an error.
     except SettingsError as e:
         print(e)
     except httpx.HTTPStatusError as e:

@@ -92,6 +92,13 @@ def test_optional_settings_have_defaults():
     assert Settings.from_env({**ENV, "ANTHROPIC_MODEL": "claude-x"}).model == "claude-x"
 
 
+def test_dependency_url_echoing_the_agent_resource_falls_back_to_pagerduty():
+    # `keycard new agent` can write the agent's own resource as the dependency;
+    # that is not the PagerDuty resource, so treat it as unset and fall back.
+    echoed = {**ENV, "KEYCARD_DEPENDENCY_URL": ENV["KEYCARD_RESOURCE_URL"]}
+    assert Settings.from_env(echoed).dependency_url == PAGERDUTY_URL
+
+
 def test_secrets_are_not_in_repr():
     settings = repr(Settings.from_env(ENV))
     assert ENV["KEYCARD_CLIENT_SECRET"] not in settings
@@ -214,9 +221,11 @@ def run_failing(monkeypatch):
         monkeypatch.setenv(var, value)
 
     def run_with(error: Exception) -> None:
-        async def fail(settings):
+        async def fail(settings, **kwargs):
             raise error
 
+        # `run()` now parses argv; keep pytest's own flags out of argparse.
+        monkeypatch.setattr("sys.argv", ["getting-started-agent"])
         monkeypatch.setattr(main, "main", fail)
         main.run()
 
