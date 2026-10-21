@@ -1,10 +1,13 @@
-.PHONY: install dev test lint format
+.PHONY: install dev watch test lint format
 
 install:
 	uv sync
 
 dev:
-	uv run getting-started-agent
+	uv run getting-started-agent --watch
+
+watch:
+	uv run getting-started-agent --watch
 
 test:
 	uv run pytest
