@@ -73,8 +73,8 @@ class Settings:
         values = {name: env[var] for name, var in REQUIRED.items()}
         # `keycard new agent` can write the agent's own resource here. That's what the agent
         # *is*, not what it reads, so say so and read PagerDuty instead.
-        dependency = env.get(DEPENDENCY, "").rstrip("/")
-        if dependency == values["resource_url"].rstrip("/"):
+        dependency = env.get(DEPENDENCY, "")
+        if dependency.rstrip("/") == values["resource_url"].rstrip("/"):
             print(
                 f"`{DEPENDENCY}` is the agent's own resource, not a dependency; "
                 f"reading {PAGERDUTY_URL} instead.",

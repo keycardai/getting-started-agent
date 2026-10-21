@@ -101,6 +101,11 @@ def test_dependency_url_echoing_the_agent_resource_falls_back_to_pagerduty(capsy
         assert "is the agent's own resource" in capsys.readouterr().err
 
 
+def test_dependency_url_is_used_exactly_as_registered():
+    registered = {**ENV, "KEYCARD_DEPENDENCY_URL": "https://api.pagerduty.com/"}
+    assert Settings.from_env(registered).dependency_url == "https://api.pagerduty.com/"
+
+
 def test_secrets_are_not_in_repr():
     settings = repr(Settings.from_env(ENV))
     assert ENV["KEYCARD_CLIENT_SECRET"] not in settings
