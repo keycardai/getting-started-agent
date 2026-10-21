@@ -16,7 +16,8 @@ from .keycard import TokenClient, dependency_token
 
 SYSTEM_PROMPT = (
     "You are an on-call assistant. Call list_open_incidents once, then summarize what is "
-    "open in PagerDuty, most urgent first, one line per incident. If nothing is open, say so."
+    "open in PagerDuty, most urgent first, one line per incident. If `more` is true, say "
+    "the list is truncated. If nothing is open, say so."
 )
 
 

@@ -12,7 +12,8 @@ OPEN_STATUSES = ["triggered", "acknowledged"]
 MAX_INCIDENTS = 25
 
 
-async def open_incidents(http: httpx.AsyncClient, api_url: str, api_key: str) -> list[dict]:
+async def open_incidents(http: httpx.AsyncClient, api_url: str, api_key: str) -> dict:
+    """The first page of open incidents; `more` tells the model the list is truncated."""
     response = await http.get(
         f"{api_url.rstrip('/')}/incidents",
         params={"statuses[]": OPEN_STATUSES, "limit": MAX_INCIDENTS},
@@ -22,7 +23,8 @@ async def open_incidents(http: httpx.AsyncClient, api_url: str, api_key: str) ->
         },
     )
     response.raise_for_status()
-    return [
+    page = response.json()
+    incidents = [
         {
             "number": incident["incident_number"],
             "title": incident["title"],
@@ -32,5 +34,6 @@ async def open_incidents(http: httpx.AsyncClient, api_url: str, api_key: str) ->
             "created_at": incident["created_at"],
             "url": incident["html_url"],
         }
-        for incident in response.json()["incidents"]
+        for incident in page["incidents"]
     ]
+    return {"incidents": incidents, "more": page.get("more", False)}

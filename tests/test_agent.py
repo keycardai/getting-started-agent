@@ -131,7 +131,7 @@ async def test_graph_reads_open_incidents_with_the_exchanged_key():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, json={"incidents": [INCIDENT]})
+        return httpx.Response(200, json={"incidents": [INCIDENT], "more": True})
 
     result = await run_graph(handler)
 
@@ -141,17 +141,20 @@ async def test_graph_reads_open_incidents_with_the_exchanged_key():
     assert request.headers["Authorization"] == "Token token=pagerduty-key"
 
     [tool_result] = [m for m in result["messages"] if isinstance(m, ToolMessage)]
-    assert json.loads(tool_result.content) == [
-        {
-            "number": 42,
-            "title": "Checkout latency",
-            "status": "triggered",
-            "urgency": "high",
-            "service": "checkout",
-            "created_at": "2026-10-20T12:00:00Z",
-            "url": "https://acme.pagerduty.test/incidents/P42",
-        }
-    ]
+    assert json.loads(tool_result.content) == {
+        "incidents": [
+            {
+                "number": 42,
+                "title": "Checkout latency",
+                "status": "triggered",
+                "urgency": "high",
+                "service": "checkout",
+                "created_at": "2026-10-20T12:00:00Z",
+                "url": "https://acme.pagerduty.test/incidents/P42",
+            }
+        ],
+        "more": True,
+    }
     assert result["messages"][-1].text == "#42 Checkout latency"
     assert not any("pagerduty-key" in str(m.content) for m in result["messages"])
 
