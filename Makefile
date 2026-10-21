@@ -4,7 +4,7 @@ install:
 	uv sync
 
 dev:
-	uv run getting-started-agent
+	uv run getting-started-agent --watch --interval 15
 
 watch:
 	uv run getting-started-agent --watch

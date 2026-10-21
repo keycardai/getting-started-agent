@@ -15,10 +15,13 @@ make install
 make dev
 ```
 
-`make dev` asks the agent what's open in PagerDuty and prints its summary, once.
-Each run shows up in your zone's activity log with the agent as the actor.
-In localdev nothing real sits behind the PagerDuty resource yet, so the run
-stops after the token exchange and says so; that's expected.
+`make dev` keeps the agent running: it asks what's open in PagerDuty every 15s
+until you Ctrl-C. A missing token or dependency prints and retries, so once you
+add the PagerDuty resource in Console the next cycle picks it up. Each cycle
+re-authenticates and shows up in your zone's activity log with the agent as the
+actor. In localdev nothing real sits behind the PagerDuty resource yet, so a
+cycle may say the identity flow worked and there were no incidents; that's
+expected.
 
 `make watch` keeps it running: the agent re-checks on an interval (every 10s;
 `--interval SECONDS` to change), waking, reading, and settling on a loop until
