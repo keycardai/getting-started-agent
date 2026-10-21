@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import sys
 from datetime import datetime
 
@@ -30,6 +31,16 @@ DEPENDENCY_NOT_WIRED = {401, 403, 404}
 # than tearing down the whole watcher. A one-shot run lets them propagate so the
 # exit code reflects the failure.
 CYCLE_ERRORS = (OAuthError, httpx.HTTPError, anthropic.APIError)
+# Each --watch cycle is a Keycard grant, an exchange and a model call on the
+# user's key, so don't let a typo turn it into a tight loop.
+MIN_INTERVAL = 5.0
+
+
+def _interval(value: str) -> float:
+    seconds = float(value)
+    if not MIN_INTERVAL <= seconds < math.inf:
+        raise argparse.ArgumentTypeError(f"must be at least {MIN_INTERVAL:g} seconds, got {value}")
+    return seconds
 
 
 async def _ask(graph) -> str:
@@ -74,7 +85,7 @@ def run() -> None:
     )
     parser.add_argument(
         "--interval",
-        type=float,
+        type=_interval,
         default=60.0,
         metavar="SECONDS",
         help="Seconds between checks in --watch mode (default: 60).",

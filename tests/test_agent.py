@@ -272,3 +272,12 @@ def test_other_known_failures_exit_1_with_one_friendly_line(run_failing, error):
 def test_unexpected_errors_still_raise(run_failing):
     with pytest.raises(ValueError):
         run_failing(ValueError("a real bug"))
+
+
+@pytest.mark.parametrize("interval", ["0", "-1", "4.9", "inf", "nan"])
+def test_watch_rejects_intervals_that_would_flood_or_stall(monkeypatch, capsys, interval):
+    monkeypatch.setattr("sys.argv", ["getting-started-agent", "--watch", "--interval", interval])
+    with pytest.raises(SystemExit) as exit_info:
+        main.run()
+    assert exit_info.value.code == 2
+    assert "--interval: must be at least 5 seconds" in capsys.readouterr().err
