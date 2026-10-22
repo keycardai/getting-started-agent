@@ -79,7 +79,7 @@ client secret. On Fly it is a scheduled Machine (`fly.toml`, `Dockerfile`):
 
 ```sh
 fly launch --no-deploy
-fly secrets set KEYCARD_ZONE_URL=... KEYCARD_RESOURCE_URL=... ANTHROPIC_API_KEY=...
+fly secrets set --stage KEYCARD_ZONE_URL=... KEYCARD_RESOURCE_URL=... ANTHROPIC_API_KEY=...
 fly machine run . --name agent --schedule hourly
 ```
 
