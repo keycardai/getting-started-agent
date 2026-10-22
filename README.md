@@ -43,8 +43,9 @@ tool, `list_open_incidents`. The model calls it once, and the tool uses the
 Keycard calls in `src/getting_started_agent/keycard.py`:
 
 1. **Authenticate as itself.** A `client_credentials` grant with
-   `resource=KEYCARD_RESOURCE_URL` (the agent's own resource), using the
-   agent's client ID and secret.
+   `resource=KEYCARD_RESOURCE_URL` (the agent's own resource). Locally the
+   agent proves who it is with its client ID and secret; deployed, with the
+   host's identity (see [Deploying](#deploying)).
 2. **Exchange for PagerDuty.** An RFC 8693 token exchange of that token for
    the PagerDuty resource (`KEYCARD_DEPENDENCY_URL`). PagerDuty is backed by a vaulted API key, so the
    exchanged token is that key.
@@ -63,13 +64,31 @@ to `.env` and fill it in:
 | Variable | Meaning |
 | --- | --- |
 | `KEYCARD_ZONE_URL` | Your zone, e.g. `https://<zone-id>.keycard.cloud` |
-| `KEYCARD_CLIENT_ID` / `KEYCARD_CLIENT_SECRET` | The agent application's credentials |
+| `KEYCARD_CLIENT_ID` / `KEYCARD_CLIENT_SECRET` | The agent application's credentials, for running locally |
 | `KEYCARD_RESOURCE_URL` | The agent's own resource |
 | `KEYCARD_DEPENDENCY_URL` | Optional PagerDuty resource; defaults to `https://api.pagerduty.com` |
 | `ANTHROPIC_API_KEY` | Your model key (not written by `keycard new agent`) |
 | `ANTHROPIC_MODEL` | Optional; defaults to `claude-sonnet-5-5` |
 
 URLs must be `https://` (plain `http://` is allowed only for `localhost`).
+
+## Deploying
+
+Deployed, the agent runs one cycle per invocation on a schedule and carries no
+client secret. On Fly it is a scheduled Machine (`fly.toml`, `Dockerfile`):
+
+```sh
+fly launch --no-deploy
+fly secrets set KEYCARD_ZONE_URL=... KEYCARD_RESOURCE_URL=... ANTHROPIC_API_KEY=...
+fly machine run . --name agent --schedule hourly
+```
+
+Fly issues every Machine an OIDC token whose subject is `<org>:<app>:<machine>`.
+The Deploy step in the Keycard console registers that subject as a workload
+identity credential on the agent's application, and the agent presents the
+token as a client assertion on each request (`keycard.py`). The Machine name
+is part of the subject, so it has to match what you told the console. To run a
+cycle now instead of waiting for the hour: `fly machine start $(fly machine list -q)`.
 
 ## Development
 

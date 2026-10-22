@@ -21,7 +21,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from .config import Settings, SettingsError
 from .graph import build_graph
-from .keycard import DependencyAccessError, connect
+from .keycard import DependencyAccessError, WorkloadIdentityError, connect
 
 QUESTION = "What's open in PagerDuty right now?"
 # Room for the one-line-per-incident summary at pagerduty.MAX_INCIDENTS.
@@ -82,10 +82,14 @@ def explain(error: Exception) -> tuple[bool, str] | None:
     if isinstance(error, httpx.RequestError):
         host = error.request.url.host
         return False, f"Couldn't reach {host}. Check `KEYCARD_DEPENDENCY_URL` in `.env`."
+    if isinstance(error, WorkloadIdentityError):
+        return False, f"{error} The agent can't prove who it is without it."
     if isinstance(error, OAuthError):
         return False, (
-            "Keycard didn't issue a token. Check `KEYCARD_ZONE_URL`, `KEYCARD_CLIENT_ID` "
-            "and `KEYCARD_CLIENT_SECRET` in `.env`."
+            "Keycard didn't issue a token. Locally, check `KEYCARD_ZONE_URL`, "
+            "`KEYCARD_CLIENT_ID` and `KEYCARD_CLIENT_SECRET` in `.env`. Deployed, check "
+            "that the Deploy step in the console registered this host's identity "
+            "(the org, app and Machine name must match)."
         )
     if isinstance(error, anthropic.APIError):
         return False, (
