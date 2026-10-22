@@ -5,11 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import math
-import os
-import ssl
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import anthropic
 import httpx
@@ -31,28 +28,6 @@ MAX_TOKENS = 8192
 DEFAULT_INTERVAL = 15.0
 MIN_INTERVAL = 5.0
 IDENTITY_WORKED = "Authenticated to Keycard and exchanged a token — the identity flow worked."
-
-
-def _dev_ssl_context() -> ssl.SSLContext | None:
-    """TEMPORARY: trust the local mkcert CA so localdev TLS verifies.
-
-    Prefers the KEYCARD_DEV_CA_BUNDLE path, then ./localdev-ca.pem at the repo
-    root. Returns None (default system trust) when neither is present. Remove
-    this and its call sites once the zone has a publicly trusted certificate.
-    """
-    ca = os.environ.get("KEYCARD_DEV_CA_BUNDLE")
-    if not ca:
-        local = Path(__file__).resolve().parents[2] / "localdev-ca.pem"
-        ca = str(local) if local.exists() else None
-    if not ca:
-        return None
-    # Trust the dev CA *in addition to* the system roots, not instead of them:
-    # the same context also verifies calls to public APIs (PagerDuty), whose
-    # certs chain to the system roots. `create_default_context(cafile=ca)` would
-    # load only the dev CA and reject those with CERTIFICATE_VERIFY_FAILED.
-    context = ssl.create_default_context()
-    context.load_verify_locations(cafile=ca)
-    return context
 
 
 def explain(error: Exception) -> tuple[bool, str] | None:
@@ -81,7 +56,7 @@ def explain(error: Exception) -> tuple[bool, str] | None:
         return False, f"PagerDuty returned {status}. Try again in a minute."
     if isinstance(error, httpx.RequestError):
         host = error.request.url.host
-        return False, f"Couldn't reach {host}. Check `KEYCARD_DEPENDENCY_URL` in `.env`."
+        return False, f"Couldn't reach {host}. Check `KEYCARD_DEPENDENCY_URL`."
     if isinstance(error, WorkloadIdentityError):
         return False, f"{error} The agent can't prove who it is without it."
     # Before OAuthError, which both subclass: an unreachable zone is not a
@@ -131,12 +106,7 @@ async def main(settings: Settings, *, interval: float | None = None) -> None:
     model = ChatAnthropic(
         model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
     )
-    # TEMPORARY: trust the local mkcert CA so localdev TLS verifies.
-    dev_ssl = _dev_ssl_context()
-    async with (
-        connect(settings, ssl_context=dev_ssl) as keycard,
-        httpx.AsyncClient(timeout=15.0, verify=dev_ssl or True) as http,
-    ):
+    async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
         graph = build_graph(settings, keycard, http, model)
         if interval is None:
             print(await ask(graph))

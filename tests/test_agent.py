@@ -155,14 +155,14 @@ FLY_ENV = {
 
 def test_on_fly_the_client_secret_is_not_required():
     settings = Settings.from_env(FLY_ENV)
-    assert settings.workload_host == "fly"
+    assert settings.on_fly
     assert (settings.client_id, settings.client_secret) == (None, None)
 
 
 def test_on_fly_a_shipped_client_secret_is_ignored():
     # A .env that leaked into the image must not turn into Basic auth.
     settings = Settings.from_env({**FLY_ENV, **ENV})
-    assert settings.workload_host == "fly"
+    assert settings.on_fly
     assert settings.client_secret is None
 
 

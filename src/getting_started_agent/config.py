@@ -13,19 +13,15 @@ REQUIRED = {
     "resource_url": "KEYCARD_RESOURCE_URL",
     "anthropic_api_key": "ANTHROPIC_API_KEY",
 }
-# Local only. Deployed, the agent proves who it is with the host's identity
-# token instead (see `WORKLOAD_HOSTS`), so no client secret leaves the laptop.
+# Local only. On Fly the agent proves who it is with the Machine's identity
+# token instead, so no client secret leaves the laptop.
 CLIENT_CREDENTIALS = {
     "client_id": "KEYCARD_CLIENT_ID",
     "client_secret": "KEYCARD_CLIENT_SECRET",
 }
-# Hosts that give the running agent an OIDC identity Keycard can trust, keyed
-# by the variable the host sets in every instance. The console's Deploy step
-# registers that identity as a workload credential on the agent's Application.
-WORKLOAD_HOSTS = {
-    "FLY_APP_NAME": "fly",
-}
-HOST_SECRETS = {"fly": "`fly secrets set NAME=value`"}
+# Fly sets this in every Machine. The console's Deploy step registers the
+# Machine's identity as a workload credential on the agent's Application.
+FLY = "FLY_APP_NAME"
 DEPENDENCY = "KEYCARD_DEPENDENCY_URL"
 PAGERDUTY_URL = "https://api.pagerduty.com"
 MODEL = "ANTHROPIC_MODEL"
@@ -56,35 +52,33 @@ class Settings:
     zone_url: str
     resource_url: str
     anthropic_api_key: str = field(repr=False)
-    # Exactly one of these identifies the agent: a client id + secret locally,
-    # or the host ("fly") whose identity token the deployed agent presents.
+    # Either identifies the agent: a client id + secret locally, or, on Fly,
+    # the Machine's identity token.
     client_id: str | None = None
     client_secret: str | None = field(default=None, repr=False)
-    workload_host: str | None = None
+    on_fly: bool = False
     dependency_url: str = PAGERDUTY_URL
     model: str = DEFAULT_MODEL
 
     def __post_init__(self) -> None:
         _require_https(REQUIRED["zone_url"], self.zone_url)
         _require_https(DEPENDENCY, self.dependency_url)
-        if self.workload_host is None and not (self.client_id and self.client_secret):
-            raise SettingsError(
-                "The agent needs either a client id and secret or a workload identity."
-            )
+        if not self.on_fly and not (self.client_id and self.client_secret):
+            raise SettingsError("The agent needs a client id and secret, or to run on Fly.")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         env = os.environ if env is None else env
-        workload_host = next((host for var, host in WORKLOAD_HOSTS.items() if env.get(var)), None)
-        required = REQUIRED if workload_host else {**REQUIRED, **CLIENT_CREDENTIALS}
+        on_fly = bool(env.get(FLY))
+        required = REQUIRED if on_fly else {**REQUIRED, **CLIENT_CREDENTIALS}
         missing = [var for var in required.values() if not env.get(var)]
-        if missing and workload_host:
+        if missing and on_fly:
             # Deployed: there is no .env to edit, the host holds the secrets.
             names = ", ".join(f"`{var}`" for var in missing)
             raise SettingsError(
                 f"The deployed agent needs {names} set. "
                 f"Set {'it' if len(missing) == 1 else 'them'} as app secrets "
-                f"({HOST_SECRETS[workload_host]}) and run it again."
+                "(`fly secrets set NAME=value`) and run it again."
             )
         if len(missing) == 1:
             raise SettingsError(
@@ -99,10 +93,10 @@ class Settings:
                 f"add the rest there too, {RETRY}"
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
-        # A deployed agent may still carry a local .env's client id; the host's
+        # A deployed agent may still carry a local .env's client id; the Machine's
         # identity wins, so the secret is never sent even if it was shipped.
         credentials = {
-            name: None if workload_host else env.get(var) or None
+            name: None if on_fly else env.get(var) or None
             for name, var in CLIENT_CREDENTIALS.items()
         }
         # `keycard new agent` can write the agent's own resource here. That's what the agent
@@ -118,7 +112,7 @@ class Settings:
         return cls(
             **values,
             **credentials,
-            workload_host=workload_host,
+            on_fly=on_fly,
             dependency_url=dependency or PAGERDUTY_URL,
             model=env.get(MODEL) or DEFAULT_MODEL,
         )

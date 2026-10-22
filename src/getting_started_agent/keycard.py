@@ -18,18 +18,10 @@ Each request appears in the zone's activity log with the agent as the actor.
 
 from __future__ import annotations
 
-import ssl
 from typing import Any, Protocol
 
 import httpx
-from keycardai.oauth import (
-    AsyncClient,
-    BasicAuth,
-    ClientConfig,
-    OAuthError,
-    TokenResponse,
-    TokenType,
-)
+from keycardai.oauth import AsyncClient, BasicAuth, OAuthError, TokenResponse, TokenType
 
 from .config import Settings
 
@@ -64,23 +56,14 @@ class TokenClient(Protocol):
     async def exchange_token(self, **kwargs) -> TokenResponse: ...
 
 
-def connect(settings: Settings, *, ssl_context: ssl.SSLContext | None = None) -> AsyncClient:
+def connect(settings: Settings) -> AsyncClient:
     """An OAuth client for the zone, authenticating as the agent's application.
 
-    With a workload identity the client carries no credentials of its own: each
-    request authenticates with the assertion `dependency_token` attaches.
-
-    ``ssl_context``, when given, is forwarded to the underlying httpx client as
-    its ``verify`` so a local dev CA (mkcert) is trusted. TEMPORARY: remove once
-    the zone presents a publicly trusted certificate.
+    On Fly the client carries no credentials of its own: each request
+    authenticates with the assertion `dependency_token` attaches.
     """
-    config = ClientConfig(verify_ssl=ssl_context) if ssl_context is not None else None
-    auth = (
-        None
-        if settings.workload_host
-        else BasicAuth(settings.client_id or "", settings.client_secret or "")
-    )
-    return AsyncClient(settings.zone_url, auth=auth, config=config)
+    auth = None if settings.on_fly else BasicAuth(settings.client_id, settings.client_secret)
+    return AsyncClient(settings.zone_url, auth=auth)
 
 
 async def fly_identity_token(audience: str) -> str:
@@ -105,12 +88,12 @@ async def fly_identity_token(audience: str) -> str:
 
 async def client_assertion(settings: Settings) -> dict[str, Any]:
     """Extra token-request parameters that prove the agent's identity to the
-    zone when it runs with a workload identity; empty when a client secret does.
+    zone when it runs on Fly; empty when a client secret does.
 
     The zone resolves the credential by the assertion's issuer and subject, so
     no client id travels with it.
     """
-    if settings.workload_host == "fly":
+    if settings.on_fly:
         token = await fly_identity_token(settings.zone_url)
         return {"client_assertion": token, "client_assertion_type": JWT_BEARER}
     return {}

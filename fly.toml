@@ -12,9 +12,8 @@
 # <org>:<app>:<machine>), so keep the name and run the console's deploy form
 # again if you recreate it under another one.
 #
-# `fly launch` fills in `app` with the name it chose for you.
+# `fly launch` adds `app` here with the name it chose for you.
 
-app = 'agent-shimmering-paper-5864'
 primary_region = 'sjc'
 
 [build]
