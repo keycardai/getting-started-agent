@@ -80,8 +80,11 @@ client secret. On Fly it is a scheduled Machine (`fly.toml`, `Dockerfile`):
 ```sh
 fly launch --no-deploy
 fly secrets set --stage KEYCARD_ZONE_URL=... KEYCARD_RESOURCE_URL=... ANTHROPIC_API_KEY=...
-fly machine run . --name agent --schedule hourly
+fly machine run . --name agent --schedule hourly --restart no
 ```
+
+`--restart no` matters: Fly otherwise restarts a Machine that exits non-zero,
+and each retry that gets as far as the model is another call on your key.
 
 Fly issues every Machine an OIDC token whose subject is `<org>:<app>:<machine>`.
 The Deploy step in the Keycard console registers that subject as a workload

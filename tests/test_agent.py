@@ -3,7 +3,13 @@ import json
 import anthropic
 import httpx
 import pytest
-from keycardai.oauth import OAuthError, TokenResponse, TokenType
+from keycardai.oauth import (
+    AuthorizationServerDiscoveryError,
+    NetworkError,
+    OAuthError,
+    TokenResponse,
+    TokenType,
+)
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -353,6 +359,22 @@ def test_missing_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing
     assert "Authenticated to Keycard as the agent" in out
     assert "no dependency" in out
     assert ENV["KEYCARD_DEPENDENCY_URL"] in out
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        NetworkError(httpx.ConnectError("Name or service not known")),
+        AuthorizationServerDiscoveryError(ENV["KEYCARD_ZONE_URL"]),
+    ],
+    ids=["network", "discovery"],
+)
+def test_unreachable_zone_says_so_instead_of_blaming_the_secret(run_failing, error):
+    with pytest.raises(SystemExit) as e:
+        run_failing(error)
+    message = str(e.value.code)
+    assert "Couldn't reach Keycard" in message
+    assert "KEYCARD_CLIENT_SECRET" not in message
 
 
 @pytest.mark.parametrize("status", [401, 403])

@@ -14,7 +14,7 @@ from pathlib import Path
 import anthropic
 import httpx
 from dotenv import load_dotenv
-from keycardai.oauth import OAuthError
+from keycardai.oauth import AuthorizationServerDiscoveryError, NetworkError, OAuthError
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 from langgraph.graph.state import CompiledStateGraph
@@ -84,6 +84,14 @@ def explain(error: Exception) -> tuple[bool, str] | None:
         return False, f"Couldn't reach {host}. Check `KEYCARD_DEPENDENCY_URL` in `.env`."
     if isinstance(error, WorkloadIdentityError):
         return False, f"{error} The agent can't prove who it is without it."
+    # Before OAuthError, which both subclass: an unreachable zone is not a
+    # rejected credential, and saying so is the difference between checking
+    # the URL and checking the secret.
+    if isinstance(error, (NetworkError, AuthorizationServerDiscoveryError)):
+        return False, (
+            f"Couldn't reach Keycard at `KEYCARD_ZONE_URL` ({error}). Check the URL; "
+            "a localdev zone is only reachable from your own machine."
+        )
     if isinstance(error, OAuthError):
         return False, (
             "Keycard didn't issue a token. Locally, check `KEYCARD_ZONE_URL`, "
