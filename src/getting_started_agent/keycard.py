@@ -1,22 +1,33 @@
 """The agent's Keycard identity: a token as itself, exchanged for a dependency.
 
-Two requests to the zone's token endpoint, both authenticated with the agent's
-client credentials:
+Two requests to the zone's token endpoint, both authenticated as the agent's
+Application:
 
 1. `client_credentials` with `resource` set to the agent's own resource. This
    is the agent proving who it is; no user is involved.
 2. RFC 8693 token exchange of that token for one scoped to the dependency.
+
+How the agent proves who it is depends on where it runs. Locally it is a
+client id and secret from `.env`. Deployed, it is the host's identity: Fly
+issues each Machine an OIDC token (``sub`` is ``<org>:<app>:<machine>``), the
+console's Deploy step registered that subject as a workload credential, and
+the agent presents the token as an RFC 7523 client assertion. No secret ships.
 
 Each request appears in the zone's activity log with the agent as the actor.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
+import httpx
 from keycardai.oauth import AsyncClient, BasicAuth, OAuthError, TokenResponse, TokenType
 
 from .config import Settings
+
+JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+# Fly's per-Machine API, reachable only from inside the Machine.
+FLY_API_SOCKET = "/.fly/api"
 
 
 class DependencyAccessError(Exception):
@@ -35,6 +46,10 @@ class DependencyAccessError(Exception):
         super().__init__(dependency_url)
 
 
+class WorkloadIdentityError(Exception):
+    """The host did not hand the agent its identity token."""
+
+
 class TokenClient(Protocol):
     async def client_credentials_grant(self, **kwargs) -> TokenResponse: ...
 
@@ -42,20 +57,57 @@ class TokenClient(Protocol):
 
 
 def connect(settings: Settings) -> AsyncClient:
-    """An OAuth client for the zone, authenticating as the agent's application."""
-    return AsyncClient(
-        settings.zone_url,
-        auth=BasicAuth(settings.client_id, settings.client_secret),
-    )
+    """An OAuth client for the zone, authenticating as the agent's application.
+
+    On Fly the client carries no credentials of its own: each request
+    authenticates with the assertion `dependency_token` attaches.
+    """
+    auth = None if settings.on_fly else BasicAuth(settings.client_id, settings.client_secret)
+    return AsyncClient(settings.zone_url, auth=auth)
+
+
+async def fly_identity_token(audience: str) -> str:
+    """The Machine's OIDC token, minted by Fly for this run.
+
+    Fly signs it under ``https://oidc.fly.io/<org>`` with ``sub``
+    ``<org>:<app>:<machine>``, which is what the Deploy step registered.
+    """
+    transport = httpx.AsyncHTTPTransport(uds=FLY_API_SOCKET)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://fly", timeout=5.0
+        ) as fly:
+            response = await fly.post("/v1/tokens/oidc", json={"aud": audience})
+            response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise WorkloadIdentityError(
+            f"Fly didn't issue this Machine an identity token ({error})."
+        ) from error
+    return response.text.strip()
+
+
+async def client_assertion(settings: Settings) -> dict[str, Any]:
+    """Extra token-request parameters that prove the agent's identity to the
+    zone when it runs on Fly; empty when a client secret does.
+
+    The zone resolves the credential by the assertion's issuer and subject, so
+    no client id travels with it.
+    """
+    if settings.on_fly:
+        token = await fly_identity_token(settings.zone_url)
+        return {"client_assertion": token, "client_assertion_type": JWT_BEARER}
+    return {}
 
 
 async def dependency_token(client: TokenClient, settings: Settings) -> str:
-    own = await client.client_credentials_grant(resource=settings.resource_url)
+    proof = await client_assertion(settings)
+    own = await client.client_credentials_grant(resource=settings.resource_url, **proof)
     try:
         exchanged = await client.exchange_token(
             subject_token=own.access_token,
             subject_token_type=TokenType.ACCESS_TOKEN,
             resource=settings.dependency_url,
+            **proof,
         )
     except OAuthError as error:
         # The grant above proved the agent's identity, so a denied exchange

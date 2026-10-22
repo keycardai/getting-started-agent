@@ -3,9 +3,13 @@
 install:
 	uv sync
 
+# One shot: authenticate, exchange, read, summarize, exit. One model call on
+# the user's key, and one grant + exchange in the activity log.
 dev:
-	uv run getting-started-agent --watch
+	uv run getting-started-agent
 
+# The loop: re-runs the one shot every 15s until Ctrl-C. Every cycle is a model
+# call on the user's key, so this is the opt-in demo, not the default.
 watch:
 	uv run getting-started-agent --watch
 

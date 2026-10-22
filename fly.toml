@@ -1,0 +1,25 @@
+# Fly app configuration for the getting-started agent.
+#
+# The agent is a background job: it authenticates to Keycard as itself, reads
+# its tool, writes one summary and exits. It serves nothing, so there is no
+# [http_service] here; Fly would otherwise wait on a port that never opens.
+#
+# Run it as one scheduled Machine (one cycle an hour), not with `fly deploy`:
+#
+#   fly machine run . --name agent --schedule hourly
+#
+# The Machine's name is part of its workload identity (Fly's token subject is
+# <org>:<app>:<machine>), so keep the name and run the console's deploy form
+# again if you recreate it under another one.
+#
+# `fly launch` adds `app` here with the name it chose for you.
+
+primary_region = 'sjc'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

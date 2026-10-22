@@ -3,12 +3,20 @@ import json
 import anthropic
 import httpx
 import pytest
-from keycardai.oauth import OAuthError, TokenResponse, TokenType
+from keycardai.oauth import (
+    AuthorizationServerDiscoveryError,
+    NetworkError,
+    OAuthError,
+    TokenResponse,
+    TokenType,
+)
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from getting_started_agent import keycard as keycard_module
 from getting_started_agent import main
 from getting_started_agent.config import (
+    CLIENT_CREDENTIALS,
     DEFAULT_MODEL,
     PAGERDUTY_URL,
     REQUIRED,
@@ -16,7 +24,12 @@ from getting_started_agent.config import (
     SettingsError,
 )
 from getting_started_agent.graph import build_graph
-from getting_started_agent.keycard import DependencyAccessError, dependency_token
+from getting_started_agent.keycard import (
+    JWT_BEARER,
+    DependencyAccessError,
+    WorkloadIdentityError,
+    dependency_token,
+)
 from getting_started_agent.pagerduty import MAX_INCIDENTS, PAGE_SIZE
 
 ENV = {
@@ -87,7 +100,8 @@ def test_missing_settings_are_all_reported():
 
 
 def test_optional_settings_have_defaults():
-    defaults = Settings.from_env({k: v for k, v in ENV.items() if k in REQUIRED.values()})
+    needed = {**REQUIRED, **CLIENT_CREDENTIALS}.values()
+    defaults = Settings.from_env({k: v for k, v in ENV.items() if k in needed})
     assert (defaults.dependency_url, defaults.model) == (PAGERDUTY_URL, DEFAULT_MODEL)
     assert Settings.from_env({**ENV, "ANTHROPIC_MODEL": "claude-x"}).model == "claude-x"
 
@@ -131,6 +145,80 @@ def test_allows_plain_http_to_loopback():
         "KEYCARD_DEPENDENCY_URL": "http://127.0.0.1:9000",
     }
     assert Settings.from_env({**ENV, **local}).dependency_url == "http://127.0.0.1:9000"
+
+
+# Deployed to Fly: the Machine's identity stands in for the client secret.
+FLY_ENV = {
+    k: v for k, v in ENV.items() if k not in ("KEYCARD_CLIENT_ID", "KEYCARD_CLIENT_SECRET")
+} | {"FLY_APP_NAME": "agent-x"}
+
+
+def test_on_fly_the_client_secret_is_not_required():
+    settings = Settings.from_env(FLY_ENV)
+    assert settings.on_fly
+    assert (settings.client_id, settings.client_secret) == (None, None)
+
+
+def test_on_fly_a_shipped_client_secret_is_ignored():
+    # A .env that leaked into the image must not turn into Basic auth.
+    settings = Settings.from_env({**FLY_ENV, **ENV})
+    assert settings.on_fly
+    assert settings.client_secret is None
+
+
+def test_on_fly_missing_settings_point_at_fly_secrets():
+    with pytest.raises(SettingsError) as e:
+        Settings.from_env({"FLY_APP_NAME": "agent-x", "KEYCARD_ZONE_URL": ENV["KEYCARD_ZONE_URL"]})
+    message = str(e.value)
+    assert "fly secrets set" in message
+    assert "make dev" not in message
+    assert "KEYCARD_CLIENT_SECRET" not in message
+
+
+def test_locally_the_client_secret_is_still_required():
+    with pytest.raises(SettingsError) as e:
+        Settings.from_env({k: v for k, v in ENV.items() if k != "KEYCARD_CLIENT_SECRET"})
+    assert "KEYCARD_CLIENT_SECRET" in str(e.value)
+
+
+async def test_on_fly_both_requests_carry_the_machine_token(monkeypatch):
+    asked_for: list[str] = []
+
+    async def fake_fly_token(audience: str) -> str:
+        asked_for.append(audience)
+        return "fly-oidc-jwt"
+
+    monkeypatch.setattr(keycard_module, "fly_identity_token", fake_fly_token)
+    keycard = FakeKeycard()
+
+    assert await dependency_token(keycard, Settings.from_env(FLY_ENV)) == "pagerduty-key"
+    # One token per run, minted for the zone, presented on both requests.
+    assert asked_for == [ENV["KEYCARD_ZONE_URL"]]
+    proof = {"client_assertion": "fly-oidc-jwt", "client_assertion_type": JWT_BEARER}
+    assert keycard.calls == [
+        ("client_credentials", {"resource": ENV["KEYCARD_RESOURCE_URL"], **proof}),
+        (
+            "token_exchange",
+            {
+                "subject_token": "own-token",
+                "subject_token_type": TokenType.ACCESS_TOKEN,
+                "resource": ENV["KEYCARD_DEPENDENCY_URL"],
+                **proof,
+            },
+        ),
+    ]
+    # And no client id went over the wire: the zone resolves it from the token.
+    assert not any("client_id" in kwargs for _, kwargs in keycard.calls)
+
+
+async def test_fly_token_fetch_failure_is_a_workload_identity_error(monkeypatch):
+    class NoSocket(httpx.AsyncHTTPTransport):
+        async def handle_async_request(self, request):
+            raise httpx.ConnectError("no such file", request=request)
+
+    monkeypatch.setattr(httpx, "AsyncHTTPTransport", NoSocket)
+    with pytest.raises(WorkloadIdentityError):
+        await keycard_module.fly_identity_token("https://zone.keycard.test")
 
 
 async def test_authenticates_as_self_then_exchanges_for_dependency():
@@ -271,6 +359,22 @@ def test_missing_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing
     assert "Authenticated to Keycard as the agent" in out
     assert "no dependency" in out
     assert ENV["KEYCARD_DEPENDENCY_URL"] in out
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        NetworkError(httpx.ConnectError("Name or service not known")),
+        AuthorizationServerDiscoveryError(ENV["KEYCARD_ZONE_URL"]),
+    ],
+    ids=["network", "discovery"],
+)
+def test_unreachable_zone_says_so_instead_of_blaming_the_secret(run_failing, error):
+    with pytest.raises(SystemExit) as e:
+        run_failing(error)
+    message = str(e.value.code)
+    assert "Couldn't reach Keycard" in message
+    assert "KEYCARD_CLIENT_SECRET" not in message
 
 
 @pytest.mark.parametrize("status", [401, 403])
