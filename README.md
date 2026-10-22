@@ -15,22 +15,24 @@ make install
 make dev
 ```
 
-`make dev` keeps the agent running: it asks what's open in PagerDuty every 15s
-until you Ctrl-C (`make watch` is the same). Each cycle re-authenticates and
-re-exchanges, so each read is its own entry in your zone's activity log with
-the agent as the actor: the "background agent" rhythm, made visible.
+`make dev` asks the agent what's open in PagerDuty and prints its summary,
+once. That one run is one model call on your `ANTHROPIC_API_KEY`, and it shows
+up in your zone's activity log as a grant and an exchange with the agent as
+the actor. Run it again whenever you want another entry.
 
-A cycle that fails, e.g. because the PagerDuty resource isn't in Console yet,
-prints why and the next one tries again, so adding the resource is picked up
-on the next cycle. A missing `.env` setting stops it at startup with a note on
-what to add. In localdev nothing real sits behind the PagerDuty resource yet,
-so a cycle says the identity flow worked and there were no incidents; that's
-expected.
+A run that fails for a known reason, e.g. because the PagerDuty resource isn't
+in Console yet, prints why. A missing `.env` setting stops it at startup with a
+note on what to add. In localdev nothing real sits behind the PagerDuty
+resource yet, so a run says the identity flow worked and there were no
+incidents; that's expected.
 
-Every cycle makes at least one model call on your `ANTHROPIC_API_KEY`, even
-when the PagerDuty read fails: about 240 an hour at 15s. Use
-`--interval SECONDS` (5 or more) to slow it down, or
-`uv run getting-started-agent` to ask once and exit.
+`make watch` keeps it running: the agent re-checks every 15s until you Ctrl-C
+(`--interval SECONDS`, 5 or more, to change). Each cycle re-authenticates and
+re-exchanges, so each read is its own activity-log entry: the "background
+agent" rhythm, made visible. A cycle that fails prints why and the next one
+tries again. Every cycle is at least one model call on your key, even when the
+PagerDuty read fails: about 240 an hour at 15s, so leave it running only while
+you're watching.
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 

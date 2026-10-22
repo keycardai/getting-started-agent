@@ -12,9 +12,17 @@ Each request appears in the zone's activity log with the agent as the actor.
 
 from __future__ import annotations
 
+import ssl
 from typing import Protocol
 
-from keycardai.oauth import AsyncClient, BasicAuth, OAuthError, TokenResponse, TokenType
+from keycardai.oauth import (
+    AsyncClient,
+    BasicAuth,
+    ClientConfig,
+    OAuthError,
+    TokenResponse,
+    TokenType,
+)
 
 from .config import Settings
 
@@ -41,11 +49,18 @@ class TokenClient(Protocol):
     async def exchange_token(self, **kwargs) -> TokenResponse: ...
 
 
-def connect(settings: Settings) -> AsyncClient:
-    """An OAuth client for the zone, authenticating as the agent's application."""
+def connect(settings: Settings, *, ssl_context: ssl.SSLContext | None = None) -> AsyncClient:
+    """An OAuth client for the zone, authenticating as the agent's application.
+
+    ``ssl_context``, when given, is forwarded to the underlying httpx client as
+    its ``verify`` so a local dev CA (mkcert) is trusted. TEMPORARY: remove once
+    the zone presents a publicly trusted certificate.
+    """
+    config = ClientConfig(verify_ssl=ssl_context) if ssl_context is not None else None
     return AsyncClient(
         settings.zone_url,
         auth=BasicAuth(settings.client_id, settings.client_secret),
+        config=config,
     )
 
 
