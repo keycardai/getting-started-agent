@@ -43,9 +43,8 @@ def app(environ: dict, start_response: StartResponse) -> Iterable[bytes]:
         return _respond(start_response, "404 Not Found", f"The agent runs at {RUN_PATH}.")
     if not _authorized(environ):
         return _respond(start_response, "401 Unauthorized", "Missing or wrong CRON_SECRET.")
-    env = dict(os.environ)
-    if token := environ.get("HTTP_X_VERCEL_OIDC_TOKEN"):
-        env[VERCEL_OIDC_TOKEN] = token
+    # Only this request's token counts, never a stale one in the project's env.
+    env = {**os.environ, VERCEL_OIDC_TOKEN: environ.get("HTTP_X_VERCEL_OIDC_TOKEN", "")}
     try:
         print(asyncio.run(once(Settings.from_env(env))), flush=True)
     except Exception as e:

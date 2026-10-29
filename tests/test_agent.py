@@ -289,6 +289,13 @@ def test_vercel_run_uses_the_request_token_and_keeps_the_summary_in_the_logs(cal
     assert "2 open incidents" in capsys.readouterr().out
 
 
+def test_vercel_run_ignores_a_token_in_the_project_env(call_vercel, monkeypatch):
+    monkeypatch.setenv("VERCEL_OIDC_TOKEN", "stale")
+    seen: list[Settings] = []
+    call_vercel(lambda s: seen.append(s) or "")
+    assert not seen[0].vercel_oidc_token
+
+
 def test_vercel_only_serves_the_run_path(call_vercel):
     assert call_vercel(lambda s: "", path="/")[0] == "404 Not Found"
 
