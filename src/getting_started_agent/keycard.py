@@ -18,10 +18,18 @@ Each request appears in the zone's activity log with the agent as the actor.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 
 import httpx
-from keycardai.oauth import AsyncClient, BasicAuth, OAuthError, TokenResponse, TokenType
+from keycardai.oauth import (
+    AsyncClient,
+    BasicAuth,
+    OAuthError,
+    OAuthProtocolError,
+    TokenResponse,
+    TokenType,
+)
 
 from .config import Settings
 
@@ -31,19 +39,59 @@ FLY_API_SOCKET = "/.fly/api"
 
 
 class DependencyAccessError(Exception):
-    """The agent authenticated as itself, but Keycard had no dependency to
-    exchange that token for.
+    """The agent authenticated as itself, but Keycard refused to exchange that
+    token for the dependency.
 
-    This is the expected state before the dependency (and its API key) is added
-    in the console: the identity grant succeeds and only the exchange is denied,
-    so it is a setup-not-finished nudge, not a credentials misconfiguration
-    (those fail the client-credentials grant first). Carries the resource URL so
-    the message can name what to add (CX-1366).
+    The identity grant has already succeeded, so this is never a bad zone URL
+    or client secret (those fail the client-credentials grant first). The
+    subclasses name the refusals the zone reports, so the message can say what
+    to fix. `code` is the OAuth error code the zone returned.
     """
 
-    def __init__(self, dependency_url: str) -> None:
+    def __init__(self, dependency_url: str, code: str, description: str | None = None) -> None:
         self.dependency_url = dependency_url
-        super().__init__(dependency_url)
+        self.code = code
+        self.description = description
+        super().__init__(dependency_url, code)
+
+
+class UnknownDependencyError(DependencyAccessError):
+    """`invalid_target`: the zone has no resource at that URL, or the resource
+    has no API key stored to hand out."""
+
+
+class MissingDependencyError(DependencyAccessError):
+    """`access_denied` with no policy named: nothing permits the exchange. For an
+    agent acting as itself the zone's built-in policy permits only the resources
+    the agent declares as dependencies, so this is the state before the
+    dependency is added in the console."""
+
+
+class PolicyDeniedError(DependencyAccessError):
+    """`access_denied` naming the policy that denied it: the dependency exists,
+    but a policy in the zone forbids this exchange."""
+
+
+# The zone names the deciding policy in `error_description` only when one
+# explicitly denied the request: `Access to "R" is denied by Policy "P" ...`,
+# or `... Determining policies: P.` when it has no friendlier reason. A denial
+# with no policy named means no policy permitted it.
+_POLICY_NAMED = re.compile(r"\bdenied by Polic(y|ies)\b|\bDetermining policies: ")
+
+
+def _refusal(error: OAuthError, dependency_url: str) -> DependencyAccessError | None:
+    """The exchange refusal `error` reports, or None if the zone didn't refuse it
+    (an unreachable zone, a malformed response)."""
+    if not isinstance(error, OAuthProtocolError):
+        return None
+    if error.error == "invalid_target":
+        return UnknownDependencyError(dependency_url, error.error)
+    if error.error == "access_denied":
+        description = error.error_description or ""
+        if _POLICY_NAMED.search(description):
+            return PolicyDeniedError(dependency_url, error.error, " ".join(description.split()))
+        return MissingDependencyError(dependency_url, error.error)
+    return DependencyAccessError(dependency_url, error.error)
 
 
 class WorkloadIdentityError(Exception):
@@ -110,8 +158,9 @@ async def dependency_token(client: TokenClient, settings: Settings) -> str:
             **proof,
         )
     except OAuthError as error:
-        # The grant above proved the agent's identity, so a denied exchange
-        # means the dependency isn't wired up yet — not a bad zone URL or
-        # client secret. Say so, rather than let it read as an auth failure.
-        raise DependencyAccessError(settings.dependency_url) from error
+        # The grant above proved the agent's identity, so a refusal here is
+        # about the dependency, not the zone URL or the client secret.
+        if (refusal := _refusal(error, settings.dependency_url)) is None:
+            raise
+        raise refusal from error
     return exchanged.access_token
