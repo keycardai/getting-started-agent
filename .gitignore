@@ -12,5 +12,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Local credentials written by `keycard new agent`
+# Local credentials written by `keycard new agent`, and what `make env-pull`
+# and `vercel link` write.
 .env
+.env.local
+.vercel

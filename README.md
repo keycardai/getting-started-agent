@@ -128,6 +128,18 @@ make lint     # ruff check + format check
 make format   # ruff fix + format
 ```
 
+For a Vercel project linked with `vercel link`:
+
+```bash
+make env-push   # push KEYCARD_ZONE_URL, KEYCARD_RESOURCE_URL and ANTHROPIC_API_KEY from .env to Vercel (production)
+make env-pull   # pull the Vercel environment into .env.local
+make env-list   # list the environment set on the Vercel project
+```
+
+`make env-push` doesn't send `KEYCARD_CLIENT_ID` or `KEYCARD_CLIENT_SECRET`,
+because the deployed agent authenticates with Vercel's workload identity.
+Redeploy after it runs. `VERCEL_ENV=preview` targets another environment.
+
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE) and, for the copyright notice,
