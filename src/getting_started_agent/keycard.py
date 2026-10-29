@@ -9,9 +9,11 @@ Application:
 
 How the agent proves who it is depends on where it runs. Locally it is a
 client id and secret from `.env`. Deployed, it is the host's identity: Fly
-issues each Machine an OIDC token (``sub`` is ``<org>:<app>:<machine>``), the
-console's Deploy step registered that subject as a workload credential, and
-the agent presents the token as an RFC 7523 client assertion. No secret ships.
+issues each Machine an OIDC token (``sub`` is ``<org>:<app>:<machine>``) and
+Vercel sends one with each request (``sub`` is
+``owner:<team>:project:<project>:environment:production``). The console's
+Deploy step registered that subject as a workload credential, and the agent
+presents the token as an RFC 7523 client assertion. No secret ships.
 
 Each request appears in the zone's activity log with the agent as the actor.
 """
@@ -107,10 +109,10 @@ class TokenClient(Protocol):
 def connect(settings: Settings) -> AsyncClient:
     """An OAuth client for the zone, authenticating as the agent's application.
 
-    On Fly the client carries no credentials of its own: each request
+    Deployed, the client carries no credentials of its own: each request
     authenticates with the assertion `dependency_token` attaches.
     """
-    auth = None if settings.on_fly else BasicAuth(settings.client_id, settings.client_secret)
+    auth = None if settings.host else BasicAuth(settings.client_id, settings.client_secret)
     return AsyncClient(settings.zone_url, auth=auth)
 
 
@@ -134,17 +136,31 @@ async def fly_identity_token(audience: str) -> str:
     return response.text.strip()
 
 
+def vercel_identity_token(settings: Settings) -> str:
+    """The request's OIDC token, which Vercel signs under
+    ``https://oidc.vercel.com/<team>`` when the project's issuer mode is Team."""
+    if not settings.vercel_oidc_token:
+        raise WorkloadIdentityError(
+            "Vercel didn't send this request an identity token. Check that the "
+            "project's OIDC Federation is on, with the Team issuer mode."
+        )
+    return settings.vercel_oidc_token
+
+
 async def client_assertion(settings: Settings) -> dict[str, Any]:
     """Extra token-request parameters that prove the agent's identity to the
-    zone when it runs on Fly; empty when a client secret does.
+    zone when it is deployed; empty when a client secret does.
 
     The zone resolves the credential by the assertion's issuer and subject, so
     no client id travels with it.
     """
-    if settings.on_fly:
+    if settings.host == "fly":
         token = await fly_identity_token(settings.zone_url)
-        return {"client_assertion": token, "client_assertion_type": JWT_BEARER}
-    return {}
+    elif settings.host == "vercel":
+        token = vercel_identity_token(settings)
+    else:
+        return {}
+    return {"client_assertion": token, "client_assertion_type": JWT_BEARER}
 
 
 async def dependency_token(client: TokenClient, settings: Settings) -> str:

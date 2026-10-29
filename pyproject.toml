@@ -19,6 +19,10 @@ dependencies = [
 [project.scripts]
 getting-started-agent = "getting_started_agent.main:run"
 
+# What `vercel deploy` serves; `vercel.json` schedules the Cron that calls it.
+[tool.vercel]
+entrypoint = "src.getting_started_agent.vercel:app"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1,<10",
