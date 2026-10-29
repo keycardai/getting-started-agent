@@ -7,7 +7,7 @@ user and no gateway.
 ## Quickstart
 
 ```bash
-git clone https://github.com/keycard-sandbox/getting-started-agent.git
+git clone https://github.com/keycardai/getting-started-agent.git
 cd getting-started-agent
 keycard new agent     # registers the agent in your zone and writes .env
 # then add ANTHROPIC_API_KEY=sk-ant-... to .env
