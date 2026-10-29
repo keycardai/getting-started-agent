@@ -7,6 +7,7 @@ from keycardai.oauth import (
     AuthorizationServerDiscoveryError,
     NetworkError,
     OAuthError,
+    OAuthProtocolError,
     TokenResponse,
     TokenType,
 )
@@ -27,6 +28,9 @@ from getting_started_agent.graph import build_graph
 from getting_started_agent.keycard import (
     JWT_BEARER,
     DependencyAccessError,
+    MissingDependencyError,
+    PolicyDeniedError,
+    UnknownDependencyError,
     WorkloadIdentityError,
     dependency_token,
 )
@@ -238,21 +242,70 @@ async def test_authenticates_as_self_then_exchanges_for_dependency():
     ]
 
 
-async def test_denied_exchange_is_reported_as_a_missing_dependency():
-    # The identity grant succeeds; only the exchange is denied, which is what
-    # happens before the dependency is added in the console.
-    class NoDependency(FakeKeycard):
+def refused(error: str, description: str | None = None) -> OAuthProtocolError:
+    return OAuthProtocolError(error, description, operation="POST /token (exchange)")
+
+
+# The refusals svc-sts returns for an exchange, with the descriptions it sends.
+# A policy denial names the deciding policy; a denial with none named means no
+# policy permitted it, and for an agent acting as itself the zone's built-in
+# policy permits only its declared dependencies.
+NO_DEPENDENCY = 'Application "agent" is not allowed to access "PagerDuty".'
+FORBIDDEN = 'Access to "PagerDuty" is denied by Policy "no-weekend-pages".'
+FORBIDDEN_FALLBACK = (
+    "Access denied by policy. Policy set: ps-1. Policy set version: psv-1. "
+    "Determining policies: no-weekend-pages."
+)
+UNKNOWN_RESOURCE = 'Requested authorization for unknown resource "https://api.pagerduty.test".'
+NO_SECRET = "No secrets found for resource 'https://api.pagerduty.test'."
+
+
+@pytest.mark.parametrize(
+    ("error", "refusal"),
+    [
+        (refused("access_denied", NO_DEPENDENCY), MissingDependencyError),
+        (refused("access_denied"), MissingDependencyError),
+        (refused("access_denied", FORBIDDEN), PolicyDeniedError),
+        (refused("access_denied", FORBIDDEN_FALLBACK), PolicyDeniedError),
+        (refused("invalid_target", UNKNOWN_RESOURCE), UnknownDependencyError),
+        (refused("invalid_target", NO_SECRET), UnknownDependencyError),
+        (refused("insufficient_authorization", "raw detail"), DependencyAccessError),
+    ],
+    ids=[
+        "no-dependency",
+        "no-description",
+        "policy",
+        "policy-fallback",
+        "unknown-resource",
+        "no-api-key",
+        "other-code",
+    ],
+)
+async def test_refused_exchange_is_classified_by_error_code(error, refusal):
+    # The identity grant succeeds; only the exchange is refused.
+    class Refusing(FakeKeycard):
         async def exchange_token(self, **kwargs) -> TokenResponse:
             self.calls.append(("token_exchange", kwargs))
-            raise OAuthError("access_denied: no such dependency")
+            raise error
 
-    keycard = NoDependency()
+    keycard = Refusing()
     with pytest.raises(DependencyAccessError) as e:
         await dependency_token(keycard, Settings.from_env(ENV))
 
+    assert type(e.value) is refusal
     assert e.value.dependency_url == ENV["KEYCARD_DEPENDENCY_URL"]
+    assert e.value.code == error.error
     # It got as far as the exchange, so the client-credentials grant ran first.
     assert [name for name, _ in keycard.calls] == ["client_credentials", "token_exchange"]
+
+
+async def test_unreachable_zone_during_the_exchange_is_not_a_refusal():
+    class Unreachable(FakeKeycard):
+        async def exchange_token(self, **kwargs) -> TokenResponse:
+            raise NetworkError(httpx.ConnectError("Name or service not known"))
+
+    with pytest.raises(NetworkError):
+        await dependency_token(Unreachable(), Settings.from_env(ENV))
 
 
 async def test_graph_reads_open_incidents_with_the_exchanged_key():
@@ -344,21 +397,55 @@ def run_failing(monkeypatch):
     return run_with
 
 
-def test_unwired_dependency_is_a_clean_exit(run_failing, capsys):
-    run_failing(status_error(404))
+def test_pagerduty_404_is_an_error_that_points_at_the_url(run_failing, capsys):
+    with pytest.raises(SystemExit) as e:
+        run_failing(status_error(404))
 
-    out = capsys.readouterr().out
-    assert "the identity flow worked" in out
-    assert "this is expected" in out
+    message = str(e.value.code)
+    assert "PagerDuty returned 404" in message
+    assert "`KEYCARD_DEPENDENCY_URL`" in message
+    assert PAGERDUTY_URL in message
+    assert "identity flow worked" not in message
+    assert capsys.readouterr().out == ""
 
 
 def test_missing_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing, capsys):
-    run_failing(DependencyAccessError(ENV["KEYCARD_DEPENDENCY_URL"]))
+    run_failing(MissingDependencyError(ENV["KEYCARD_DEPENDENCY_URL"], "access_denied"))
 
     out = capsys.readouterr().out
     assert "Authenticated to Keycard as the agent" in out
     assert "no dependency" in out
+    assert "Add that resource as a dependency" in out
     assert ENV["KEYCARD_DEPENDENCY_URL"] in out
+
+
+def test_unknown_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing, capsys):
+    run_failing(UnknownDependencyError(ENV["KEYCARD_DEPENDENCY_URL"], "invalid_target"))
+
+    out = capsys.readouterr().out
+    assert "no resource at " + ENV["KEYCARD_DEPENDENCY_URL"] in out
+    assert "store its API key" in out
+
+
+def test_policy_denial_says_a_policy_denied_it_not_to_add_a_dependency(run_failing):
+    denial = PolicyDeniedError(ENV["KEYCARD_DEPENDENCY_URL"], "access_denied", FORBIDDEN)
+    with pytest.raises(SystemExit) as e:
+        run_failing(denial)
+
+    message = str(e.value.code)
+    assert "a policy in your zone denied the exchange" in message
+    assert '"no-weekend-pages"' in message
+    assert "dependency" not in message
+
+
+def test_other_refusals_exit_1_with_the_error_code(run_failing):
+    refusal = DependencyAccessError(ENV["KEYCARD_DEPENDENCY_URL"], "insufficient_authorization")
+    with pytest.raises(SystemExit) as e:
+        run_failing(refusal)
+
+    message = str(e.value.code)
+    assert "`insufficient_authorization`" in message
+    assert "dependency" not in message
 
 
 @pytest.mark.parametrize(

@@ -16,9 +16,16 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 
-from .config import Settings, SettingsError
+from .config import PAGERDUTY_URL, Settings, SettingsError
 from .graph import build_graph
-from .keycard import DependencyAccessError, WorkloadIdentityError, connect
+from .keycard import (
+    DependencyAccessError,
+    MissingDependencyError,
+    PolicyDeniedError,
+    UnknownDependencyError,
+    WorkloadIdentityError,
+    connect,
+)
 
 QUESTION = "What's open in PagerDuty right now?"
 # Room for the one-line-per-incident summary at pagerduty.MAX_INCIDENTS.
@@ -27,26 +34,45 @@ MAX_TOKENS = 8192
 # user's key, so keep it slow enough to read and don't let a typo make it a tight loop.
 DEFAULT_INTERVAL = 15.0
 MIN_INTERVAL = 5.0
-IDENTITY_WORKED = "Authenticated to Keycard and exchanged a token — the identity flow worked."
+IDENTITY_WORKED = "Authenticated to Keycard and exchanged a token, so the identity flow worked."
+AUTHENTICATED = "Authenticated to Keycard as the agent, but"
 
 
 def explain(error: Exception) -> tuple[bool, str] | None:
     """(setup_incomplete, one friendly line) for a known failure; None for a real bug."""
     if isinstance(error, SettingsError):
         return True, str(error)
-    if isinstance(error, DependencyAccessError):
+    if isinstance(error, MissingDependencyError):
         return True, (
-            "Authenticated to Keycard as the agent, but there's no dependency on "
-            f"{error.dependency_url} to exchange for yet. Add that resource as a "
-            "dependency (and store its API key) in the Keycard console, then try again."
+            f"{AUTHENTICATED} it has no dependency on {error.dependency_url} yet, so Keycard "
+            "denied the exchange. Add that resource as a dependency of the agent in the "
+            "Keycard console, then try again."
+        )
+    if isinstance(error, UnknownDependencyError):
+        return True, (
+            f"{AUTHENTICATED} your zone has no resource at {error.dependency_url} with an "
+            "API key to hand out. Add PagerDuty as a dependency of the agent in the Keycard "
+            "console and store its API key, or fix `KEYCARD_DEPENDENCY_URL` if it points at "
+            "the wrong resource, then try again."
+        )
+    if isinstance(error, PolicyDeniedError):
+        return False, (
+            f"{AUTHENTICATED} a policy in your zone denied the exchange for "
+            f"{error.dependency_url}: {error.description} "
+            "Check that policy in the Keycard console."
+        )
+    if isinstance(error, DependencyAccessError):
+        return False, (
+            f"{AUTHENTICATED} Keycard refused the exchange for {error.dependency_url} "
+            f"(`{error.code}`)."
         )
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         if status == 404:
-            return True, (
-                f"{IDENTITY_WORKED} PagerDuty returned 404, so there were no incidents to read. "
-                "In localdev nothing is wired behind `KEYCARD_DEPENDENCY_URL` yet, "
-                "so this is expected."
+            return False, (
+                "PagerDuty returned 404 for the incidents list, so `KEYCARD_DEPENDENCY_URL` "
+                f"doesn't point at PagerDuty's REST API ({PAGERDUTY_URL}). Fix it, and the "
+                "PagerDuty resource's URL in Keycard if that differs, then try again."
             )
         if status in (401, 403):
             return True, (
@@ -64,8 +90,8 @@ def explain(error: Exception) -> tuple[bool, str] | None:
     # the URL and checking the secret.
     if isinstance(error, (NetworkError, AuthorizationServerDiscoveryError)):
         return False, (
-            f"Couldn't reach Keycard at `KEYCARD_ZONE_URL` ({error}). Check the URL; "
-            "a localdev zone is only reachable from your own machine."
+            f"Couldn't reach Keycard at `KEYCARD_ZONE_URL` ({error}). Check the URL "
+            "and your network connection."
         )
     if isinstance(error, OAuthError):
         return False, (
@@ -125,7 +151,7 @@ def run() -> None:
     """Setup-incomplete states exit 0 with a nudge; other known failures exit 1 with one line."""
     parser = argparse.ArgumentParser(
         prog="getting-started-agent",
-        description="Ask the agent what's open in PagerDuty — once, or on a loop with --watch.",
+        description="Ask the agent what's open in PagerDuty, once or on a loop with --watch.",
     )
     parser.add_argument(
         "--watch", action="store_true", help="Keep re-checking until Ctrl-C instead of once."

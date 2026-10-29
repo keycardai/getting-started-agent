@@ -3,7 +3,7 @@
 install:
 	uv sync
 
-# One shot: authenticate, exchange, read, summarize, exit. One model call on
+# One shot: authenticate, exchange, read, summarize, exit. Two model calls on
 # the user's key, and one grant + exchange in the activity log.
 dev:
 	uv run getting-started-agent

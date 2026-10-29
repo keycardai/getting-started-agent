@@ -1,8 +1,22 @@
 # getting-started-agent
 
-Agent starter project for onboarding agent flow: a LangGraph agent that
-authenticates to Keycard **as itself** and reads PagerDuty directly, with no
-user and no gateway.
+A starter LangGraph agent for Keycard. The agent authenticates to Keycard **as
+itself**, exchanges that token for a PagerDuty API key, and summarizes the open
+PagerDuty incidents. No user signs in and no gateway sits in between.
+
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) and Python 3.11 or later. uv can install
+  Python for you.
+- The [Keycard CLI](https://github.com/keycardai/cli/releases), v0.0.39 or
+  later, signed in to your zone (`keycard auth signin`). `keycard new agent`
+  first shipped in v0.0.39 and doesn't appear in `keycard --help` yet.
+- An Anthropic API key. The agent only supports Anthropic models: it uses
+  `langchain-anthropic`, and another provider means changing the model in
+  `src/getting_started_agent/main.py`.
+- PagerDuty added as a dependency of the agent in the Keycard console, with a
+  PagerDuty REST API key stored on it. The key stays in Keycard; the agent
+  never reads it from `.env`.
 
 ## Quickstart
 
@@ -16,25 +30,38 @@ make dev
 ```
 
 `make dev` asks the agent what's open in PagerDuty and prints its summary,
-once. That one run is one model call on your `ANTHROPIC_API_KEY`, and it shows
-up in your zone's activity log as a grant and an exchange with the agent as
-the actor. Run it again whenever you want another entry.
+once. That one run is two model calls on your `ANTHROPIC_API_KEY`: one that
+calls the PagerDuty tool and one that writes the summary. Run it again whenever
+you want another summary.
 
-A run that fails for a known reason, e.g. because the PagerDuty resource isn't
-in Console yet, prints why. A missing `.env` setting stops it at startup with a
-note on what to add. In localdev nothing real sits behind the PagerDuty
-resource yet, so a run says the identity flow worked and there were no
-incidents; that's expected.
+A run that fails for a known reason prints one line saying why:
+
+- **No dependency yet.** Keycard denied the exchange because the agent has no
+  dependency on PagerDuty. Add it in the console.
+- **Denied by a policy.** The dependency exists, but a policy in your zone
+  denied the exchange. The line names the policy.
+- **PagerDuty returned 404.** `KEYCARD_DEPENDENCY_URL` doesn't point at
+  PagerDuty's REST API (`https://api.pagerduty.com`).
+- **A missing `.env` setting.** The run stops at startup and says what to add.
 
 `make watch` keeps it running: the agent re-checks every 15s until you Ctrl-C
-(`--interval SECONDS`, 5 or more, to change). Each cycle re-authenticates and
-re-exchanges, so each read is its own activity-log entry: the "background
-agent" rhythm, made visible. A cycle that fails prints why and the next one
-tries again. Every cycle is at least one model call on your key, even when the
-PagerDuty read fails: about 240 an hour at 15s, so leave it running only while
-you're watching.
+(`--interval SECONDS`, 5 or more, to change). Each cycle authenticates and
+exchanges again, so each read shows up in Activity on its own. A cycle that
+fails prints why and the next one tries again. Every cycle calls the model on
+your key, even when the PagerDuty read fails. That's about 240 cycles an hour
+at 15s, so leave it running only while you're watching.
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+## What you'll see in Activity
+
+Each run makes two requests to your zone, and each one shows up in the zone's
+Activity log with the agent's application as the actor and no user:
+
+1. A token issued to the agent for its own resource (`KEYCARD_RESOURCE_URL`).
+2. A token exchange of that token for PagerDuty (`KEYCARD_DEPENDENCY_URL`).
+
+If Keycard refuses the exchange, for a missing dependency or a policy, the
+denied request is in Activity too. The PagerDuty call itself goes straight to
+PagerDuty, so it isn't in Activity.
 
 ## What happens on `make dev`
 
