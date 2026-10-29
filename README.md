@@ -104,7 +104,7 @@ make format   # ruff fix + format
 For a Vercel project linked with `vercel link`:
 
 ```bash
-make env-push   # push KEYCARD_ZONE_URL and ANTHROPIC_API_KEY from .env to Vercel (production)
+make env-push   # push KEYCARD_ZONE_URL, KEYCARD_RESOURCE_URL and ANTHROPIC_API_KEY from .env to Vercel (production)
 make env-pull   # pull the Vercel environment into .env.local
 make env-list   # list the environment set on the Vercel project
 ```

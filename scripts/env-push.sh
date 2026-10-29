@@ -4,9 +4,9 @@
 # Reads DEPLOY_ENV_VARS (space-separated key names) and VERCEL_ENV from the
 # environment; the Makefile sets both. Values are never printed.
 #
-# KEYCARD_ZONE_URL and ANTHROPIC_API_KEY come from .env. The deployed agent
-# authenticates with Vercel's OIDC workload identity, so KEYCARD_CLIENT_ID and
-# KEYCARD_CLIENT_SECRET stay local.
+# KEYCARD_ZONE_URL, KEYCARD_RESOURCE_URL and ANTHROPIC_API_KEY come from .env.
+# The deployed agent authenticates with Vercel's OIDC workload identity, so
+# KEYCARD_CLIENT_ID and KEYCARD_CLIENT_SECRET stay local.
 
 set -euo pipefail
 

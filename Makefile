@@ -4,8 +4,8 @@ VERCEL_ENV ?= production
 
 # Keys from .env that `make env-push` copies to Vercel. The deployed agent
 # authenticates with Vercel's OIDC workload identity, so the client id and
-# secret stay local.
-DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL ANTHROPIC_API_KEY
+# secret stay local. It refuses to start without the other three.
+DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL KEYCARD_RESOURCE_URL ANTHROPIC_API_KEY
 
 install:
 	uv sync
