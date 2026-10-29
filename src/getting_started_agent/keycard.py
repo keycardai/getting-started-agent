@@ -74,10 +74,11 @@ class PolicyDeniedError(DependencyAccessError):
     but a policy in the zone forbids this exchange."""
 
 
-# The zone names the deciding policy in `error_description` only when one
-# explicitly denied the request: `Access to "R" is denied by Policy "P" ...`,
-# or `... Determining policies: P.` when it has no friendlier reason. A denial
-# with no policy named means no policy permitted it.
+# Zones that predate the `reason` field: the zone names the deciding policy in
+# `error_description` only when one explicitly denied the request:
+# `Access to "R" is denied by Policy "P" ...`, or `... Determining policies: P.`
+# when it has no friendlier reason. A denial with no policy named means no
+# policy permitted it.
 _POLICY_NAMED = re.compile(r"\bdenied by Polic(y|ies)\b|\bDetermining policies: ")
 
 
@@ -90,7 +91,11 @@ def _refusal(error: OAuthError, dependency_url: str) -> DependencyAccessError | 
         return UnknownDependencyError(dependency_url, error.error)
     if error.error == "access_denied":
         description = error.error_description or ""
-        if _POLICY_NAMED.search(description):
+        # The zone's machine-readable cause; older SDKs don't keep it.
+        reason = getattr(error, "reason", None)
+        if reason == "dependency_missing":
+            return MissingDependencyError(dependency_url, error.error)
+        if reason == "policy_denied" or (reason is None and _POLICY_NAMED.search(description)):
             return PolicyDeniedError(dependency_url, error.error, " ".join(description.split()))
         return MissingDependencyError(dependency_url, error.error)
     return DependencyAccessError(dependency_url, error.error)
