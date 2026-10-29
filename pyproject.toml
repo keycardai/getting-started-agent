@@ -3,7 +3,8 @@ name = "getting-started-agent"
 version = "0.1.0"
 description = "A LangGraph agent that authenticates to Keycard as itself"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=1.16,<2.0",
