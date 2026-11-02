@@ -19,3 +19,5 @@ jobs:
       - run: uv sync --locked
       - run: make lint
       - run: make test
+      - run: make check-licenses
+      - run: make check-notice

@@ -1,4 +1,5 @@
-.PHONY: install dev watch test lint format env-push env-pull env-list
+.PHONY: install dev watch test lint format checks check-licenses \
+        notice check-notice licenses-allowed env-push env-pull env-list
 
 VERCEL_ENV ?= production
 
@@ -32,6 +33,25 @@ lint:
 format:
 	uv run ruff check --fix .
 	uv run ruff format .
+
+# The licence gates, both reading the environment `uv sync --locked` produces.
+checks: check-licenses check-notice
+
+# Every installed distribution carries a licence on the allow-list.
+check-licenses:
+	uv run python scripts/licenses.py check-licenses
+
+# Regenerate NOTICE's third-party attributions from that environment.
+notice:
+	uv run python scripts/licenses.py notice
+
+# Fail when the committed NOTICE no longer matches the environment.
+check-notice:
+	uv run python scripts/licenses.py check-notice
+
+# Print the allow-list, one SPDX id per line.
+licenses-allowed:
+	uv run python scripts/licenses.py --allowed
 
 # Push DEPLOY_ENV_VARS from .env to the linked Vercel project.
 env-push:
