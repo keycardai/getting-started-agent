@@ -44,8 +44,11 @@ A run that fails for a known reason prints one line saying why:
   PagerDuty's REST API (`https://api.pagerduty.com`).
 - **A missing `.env` setting.** The run stops at startup and says what to add.
 
-`make watch` keeps it running: the agent re-checks every 15s until you Ctrl-C
-(`--interval SECONDS`, 5 or more, to change). Each cycle authenticates and
+`make watch` keeps it running: the agent re-checks every 15s
+(`--interval SECONDS`, 5 or more, to change) and stops on its own after an hour
+so a run left going overnight can't quietly burn tokens. Change the cap with
+`--for SECONDS`, or pass `--forever` to watch with no limit while you're there.
+Ctrl-C stops it any time. Each cycle authenticates and
 exchanges again, so each read shows up in Activity on its own. A cycle that
 fails prints why and the next one tries again. Every cycle calls the model on
 your key, even when the PagerDuty read fails. That's about 240 cycles an hour

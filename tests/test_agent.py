@@ -610,6 +610,80 @@ def test_watch_rejects_intervals_that_would_flood_or_stall(monkeypatch, capsys, 
     assert "--interval: must be at least 5 seconds" in capsys.readouterr().err
 
 
+@pytest.fixture
+def watch_args(monkeypatch):
+    """Runs the entry point and returns the (interval, duration) it would watch with."""
+    monkeypatch.setattr(main, "load_dotenv", lambda: None)
+    for var, value in ENV.items():
+        monkeypatch.setenv(var, value)
+
+    def capture(*argv) -> tuple[float | None, float | None]:
+        seen: dict[str, float | None] = {}
+
+        async def fake_main(settings, *, interval=None, duration=None):
+            seen["interval"], seen["duration"] = interval, duration
+
+        monkeypatch.setattr(main, "main", fake_main)
+        monkeypatch.setattr("sys.argv", ["getting-started-agent", *argv])
+        main.run()
+        return seen["interval"], seen["duration"]
+
+    return capture
+
+
+def test_watch_caps_the_run_by_default_so_it_cannot_burn_tokens_overnight(watch_args):
+    assert watch_args("--watch") == (main.DEFAULT_INTERVAL, main.DEFAULT_DURATION)
+
+
+def test_forever_opts_out_of_the_cap_for_an_attended_run(watch_args):
+    assert watch_args("--watch", "--forever") == (main.DEFAULT_INTERVAL, None)
+
+
+def test_for_overrides_the_default_cap(watch_args):
+    assert watch_args("--watch", "--for", "30") == (main.DEFAULT_INTERVAL, 30.0)
+
+
+def test_without_watch_nothing_loops(watch_args):
+    assert watch_args() == (None, None)
+
+
+@pytest.mark.parametrize("duration", ["0", "-1", "inf", "nan"])
+def test_watch_rejects_a_duration_that_would_never_stop_or_never_run(monkeypatch, capsys, duration):
+    monkeypatch.setattr("sys.argv", ["getting-started-agent", "--watch", "--for", duration])
+    with pytest.raises(SystemExit) as exit_info:
+        main.run()
+    assert exit_info.value.code == 2
+    assert "--for: must be a positive number of seconds" in capsys.readouterr().err
+
+
+async def test_watch_stops_once_the_duration_elapses(monkeypatch, capsys):
+    class Graph:
+        async def ainvoke(self, _):
+            return {"messages": [AIMessage("All quiet.")]}
+
+    # Clock reads: deadline (start), then after each cycle a check and a sleep-length read.
+    now = iter([0.0, 10.0, 10.0, 25.0])
+
+    class Loop:
+        def time(self) -> float:
+            return next(now)
+
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: Loop())
+    monkeypatch.setattr(main.asyncio, "sleep", sleep)
+    await main.watch(Graph(), 10, duration=20)
+
+    # Deadline is 20s: after the first cycle (t=10) it sleeps, after the second (t=25) it stops.
+    assert sleeps == [10]
+    out = capsys.readouterr().out
+    assert "for 20s" in out
+    assert out.count("All quiet.") == 2
+
+
 async def test_watch_survives_a_bad_cycle_with_a_friendly_line(monkeypatch, capsys):
     answers = iter([status_error(500), {"messages": [AIMessage("All quiet.")]}])
 
