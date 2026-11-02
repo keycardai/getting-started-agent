@@ -46,9 +46,11 @@ def explain(error: Exception) -> tuple[bool, str] | None:
         return True, str(error)
     if isinstance(error, MissingDependencyError):
         return True, (
-            f"{AUTHENTICATED} it has no dependency on {error.dependency_url} yet, so Keycard "
-            "denied the exchange. Add that resource as a dependency of the agent in the "
-            "Keycard console, then try again."
+            f"{AUTHENTICATED} no policy in your zone permits the exchange for "
+            f"{error.dependency_url}. With the zone's default policies, that means the "
+            "agent has no dependency on it yet: add that resource as a dependency of the "
+            "agent in the Keycard console, then try again. If your zone uses custom "
+            "policies, check that one permits it."
         )
     if isinstance(error, UnknownDependencyError):
         return True, (

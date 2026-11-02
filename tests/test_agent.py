@@ -363,8 +363,8 @@ NO_SECRET = "No secrets found for resource 'https://api.pagerduty.test'."
         (refused("access_denied"), MissingDependencyError),
         (refused("access_denied", FORBIDDEN), PolicyDeniedError),
         (refused("access_denied", FORBIDDEN_FALLBACK), PolicyDeniedError),
-        (refused("access_denied", NO_DEPENDENCY, "dependency_missing"), MissingDependencyError),
-        (refused("access_denied", FORBIDDEN, "dependency_missing"), MissingDependencyError),
+        (refused("access_denied", NO_DEPENDENCY, "no_policy_matched"), MissingDependencyError),
+        (refused("access_denied", FORBIDDEN, "no_policy_matched"), MissingDependencyError),
         (refused("access_denied", NO_DEPENDENCY, "policy_denied"), PolicyDeniedError),
         (refused("access_denied", FORBIDDEN, "policy_denied"), PolicyDeniedError),
         (refused("invalid_target", UNKNOWN_RESOURCE), UnknownDependencyError),
@@ -376,7 +376,7 @@ NO_SECRET = "No secrets found for resource 'https://api.pagerduty.test'."
         "no-description",
         "policy",
         "policy-fallback",
-        "reason-dependency-missing",
+        "reason-no-policy-matched",
         "reason-wins-over-text-dependency",
         "reason-wins-over-text-policy",
         "reason-policy-denied",
@@ -518,8 +518,9 @@ def test_missing_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing
 
     out = capsys.readouterr().out
     assert "Authenticated to Keycard as the agent" in out
-    assert "no dependency" in out
-    assert "Add that resource as a dependency" in out
+    assert "no policy in your zone permits" in out
+    assert "add that resource as a dependency" in out
+    assert "custom policies" in out
     assert ENV["KEYCARD_DEPENDENCY_URL"] in out
 
 
