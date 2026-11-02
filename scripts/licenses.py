@@ -32,9 +32,10 @@ from pathlib import Path
 
 # The licences the deployed agent may redistribute. MPL-2.0 is on it because
 # its obligations attach to the MPL-licensed files themselves, which an
-# unmodified, unvendored dependency leaves alone. PSF-2.0 and MIT-0 are on it
-# because they are permissive and appear in this environment. GPL, LGPL and
-# AGPL are off it.
+# unmodified, unvendored dependency leaves alone. MIT-0, PSF-2.0 and Unlicense
+# are on it because they are permissive and appear in this environment;
+# Unlicense is a public-domain dedication, so it carries no obligation at all.
+# GPL, LGPL and AGPL are off it.
 ALLOWED = {
     "Apache-2.0",
     "BSD-2-Clause",
@@ -44,6 +45,7 @@ ALLOWED = {
     "MIT-0",
     "MPL-2.0",
     "PSF-2.0",
+    "Unlicense",
 }
 
 # Legacy `License` values and `License ::` classifiers seen in this
