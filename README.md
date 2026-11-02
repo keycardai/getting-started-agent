@@ -120,6 +120,23 @@ token as a client assertion on each request (`keycard.py`). The Machine name
 is part of the subject, so it has to match what you told the console. To run a
 cycle now instead of waiting for the hour: `fly machine start $(fly machine list -q)`.
 
+On Vercel it is a function that Cron calls once a day (`vercel.json`, the most
+a Hobby plan allows; Pro allows down to every minute):
+
+```sh
+vercel link
+make env-push
+vercel deploy --prod
+```
+
+Vercel sends each request an OIDC token whose subject is
+`owner:<team>:project:<project>:environment:production`, which the Deploy step
+registers the same way. Only production deployments match it. To run a cycle
+now: `curl https://<project>.vercel.app/api/run`. The response only says whether
+it ran; the summary is in `vercel logs`. Anyone with the URL can call it, and
+each call is a model request on your key, so set `CRON_SECRET` on the project
+to make it answer only Vercel's Cron (and `curl -H "Authorization: Bearer $CRON_SECRET"`).
+
 ## Development
 
 ```bash

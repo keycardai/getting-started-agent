@@ -6,6 +6,8 @@ import argparse
 import asyncio
 import math
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 import anthropic
@@ -98,7 +100,7 @@ def explain(error: Exception) -> tuple[bool, str] | None:
             "Keycard didn't issue a token. Locally, check `KEYCARD_ZONE_URL`, "
             "`KEYCARD_CLIENT_ID` and `KEYCARD_CLIENT_SECRET` in `.env`. Deployed, check "
             "that the Deploy step in the console registered this host's identity "
-            "(the org, app and Machine name must match)."
+            "(on Fly the org, app and Machine name; on Vercel the team and project)."
         )
     if isinstance(error, anthropic.APIError):
         return False, (
@@ -127,17 +129,28 @@ async def watch(graph: CompiledStateGraph, interval: float) -> None:
         await asyncio.sleep(interval)
 
 
-async def main(settings: Settings, *, interval: float | None = None) -> None:
-    """Ask once, or every `interval` seconds when watching."""
+@asynccontextmanager
+async def agent(settings: Settings) -> AsyncIterator[CompiledStateGraph]:
     model = ChatAnthropic(
         model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
     )
     async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
-        graph = build_graph(settings, keycard, http, model)
-        if interval is None:
-            print(await ask(graph))
-        else:
-            await watch(graph, interval)
+        yield build_graph(settings, keycard, http, model)
+
+
+async def once(settings: Settings) -> str:
+    """One cycle: what `make dev` prints, and what each deployed run does."""
+    async with agent(settings) as graph:
+        return await ask(graph)
+
+
+async def main(settings: Settings, *, interval: float | None = None) -> None:
+    """Ask once, or every `interval` seconds when watching."""
+    if interval is None:
+        print(await once(settings))
+        return
+    async with agent(settings) as graph:
+        await watch(graph, interval)
 
 
 def _interval(value: str) -> float:

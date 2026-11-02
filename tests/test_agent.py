@@ -15,7 +15,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from getting_started_agent import keycard as keycard_module
-from getting_started_agent import main
+from getting_started_agent import main, vercel
 from getting_started_agent.config import (
     CLIENT_CREDENTIALS,
     DEFAULT_MODEL,
@@ -159,14 +159,14 @@ FLY_ENV = {
 
 def test_on_fly_the_client_secret_is_not_required():
     settings = Settings.from_env(FLY_ENV)
-    assert settings.on_fly
+    assert settings.host == "fly"
     assert (settings.client_id, settings.client_secret) == (None, None)
 
 
 def test_on_fly_a_shipped_client_secret_is_ignored():
     # A .env that leaked into the image must not turn into Basic auth.
     settings = Settings.from_env({**FLY_ENV, **ENV})
-    assert settings.on_fly
+    assert settings.host == "fly"
     assert settings.client_secret is None
 
 
@@ -223,6 +223,96 @@ async def test_fly_token_fetch_failure_is_a_workload_identity_error(monkeypatch)
     monkeypatch.setattr(httpx, "AsyncHTTPTransport", NoSocket)
     with pytest.raises(WorkloadIdentityError):
         await keycard_module.fly_identity_token("https://zone.keycard.test")
+
+
+# Deployed to Vercel: each request's OIDC header stands in for the client secret.
+VERCEL_ENV = {
+    k: v for k, v in ENV.items() if k not in ("KEYCARD_CLIENT_ID", "KEYCARD_CLIENT_SECRET")
+} | {"VERCEL": "1", "VERCEL_OIDC_TOKEN": "vercel-oidc-jwt"}
+
+
+def test_on_vercel_a_shipped_client_secret_is_ignored():
+    settings = Settings.from_env({**VERCEL_ENV, **ENV})
+    assert settings.host == "vercel"
+    assert settings.client_secret is None
+    assert "vercel-oidc-jwt" not in repr(settings)
+
+
+def test_on_vercel_missing_settings_point_at_env_push():
+    with pytest.raises(SettingsError) as e:
+        Settings.from_env({"VERCEL": "1", "KEYCARD_ZONE_URL": ENV["KEYCARD_ZONE_URL"]})
+    assert "make env-push" in str(e.value)
+    assert "fly secrets" not in str(e.value)
+
+
+async def test_on_vercel_both_requests_carry_the_request_token():
+    keycard = FakeKeycard()
+    assert await dependency_token(keycard, Settings.from_env(VERCEL_ENV)) == "pagerduty-key"
+    proof = {"client_assertion": "vercel-oidc-jwt", "client_assertion_type": JWT_BEARER}
+    assert all(proof.items() <= kwargs.items() for _, kwargs in keycard.calls)
+
+
+async def test_on_vercel_a_missing_token_is_a_workload_identity_error():
+    settings = Settings.from_env({k: v for k, v in VERCEL_ENV.items() if k != "VERCEL_OIDC_TOKEN"})
+    with pytest.raises(WorkloadIdentityError):
+        await dependency_token(FakeKeycard(), settings)
+
+
+@pytest.fixture
+def call_vercel(monkeypatch):
+    """Calls the Vercel entrypoint with `once` replaced by `cycle`."""
+    for var, value in VERCEL_ENV.items():
+        if var != "VERCEL_OIDC_TOKEN":
+            monkeypatch.setenv(var, value)
+    monkeypatch.delenv("CRON_SECRET", raising=False)
+
+    def call(cycle, path="/api/run", **headers) -> tuple[str, str]:
+        async def fake_once(settings):
+            return cycle(settings)
+
+        monkeypatch.setattr(vercel, "once", fake_once)
+        started: list[str] = []
+        body = vercel.app({"PATH_INFO": path, **headers}, lambda s, h: started.append(s))
+        return started[0], b"".join(body).decode()
+
+    return call
+
+
+def test_vercel_run_uses_the_request_token_and_keeps_the_summary_in_the_logs(call_vercel, capsys):
+    seen: list[Settings] = []
+    status, body = call_vercel(
+        lambda s: seen.append(s) or "2 open incidents", HTTP_X_VERCEL_OIDC_TOKEN="jwt"
+    )
+    assert status == "200 OK"
+    assert seen[0].vercel_oidc_token == "jwt"
+    assert "2 open incidents" not in body
+    assert "2 open incidents" in capsys.readouterr().out
+
+
+def test_vercel_run_ignores_a_token_in_the_project_env(call_vercel, monkeypatch):
+    monkeypatch.setenv("VERCEL_OIDC_TOKEN", "stale")
+    seen: list[Settings] = []
+    call_vercel(lambda s: seen.append(s) or "")
+    assert not seen[0].vercel_oidc_token
+
+
+def test_vercel_only_serves_the_run_path(call_vercel):
+    assert call_vercel(lambda s: "", path="/")[0] == "404 Not Found"
+
+
+def test_vercel_run_requires_the_cron_secret_when_set(call_vercel, monkeypatch):
+    monkeypatch.setenv("CRON_SECRET", "s3cret")
+    assert call_vercel(lambda s: "")[0] == "401 Unauthorized"
+    assert call_vercel(lambda s: "", HTTP_AUTHORIZATION="Bearer s3cret")[0] == "200 OK"
+
+
+def test_vercel_run_explains_a_known_failure(call_vercel):
+    def fail(settings):
+        raise MissingDependencyError(PAGERDUTY_URL, "access_denied")
+
+    status, body = call_vercel(fail)
+    assert status == "200 OK"
+    assert "no dependency" in body
 
 
 async def test_authenticates_as_self_then_exchanges_for_dependency():

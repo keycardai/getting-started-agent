@@ -1,0 +1,14 @@
+# Keep local secrets out of the Vercel upload. `vercel deploy` bundles the
+# working directory and does not read .gitignore. The deployed agent reads its
+# settings from the project's environment (`make env-push`) and authenticates
+# with Vercel's workload identity, so none of these belong in the deployment.
+.env
+.env.*
+
+# Local tooling, caches, and the Vercel link directory.
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.vercel/
+.git/
