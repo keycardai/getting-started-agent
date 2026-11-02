@@ -15,10 +15,12 @@ install:
 dev:
 	uv run getting-started-agent
 
-# The loop: re-runs the one shot every 15s until Ctrl-C. Every cycle is a model
-# call on the user's key, so this is the opt-in demo, not the default.
+# The loop: re-runs the one shot every 15s, stopping after an hour (or Ctrl-C) so
+# an unattended run can't burn tokens overnight; pass --for SECONDS or --forever to
+# change the cap. Every cycle is a model call on the user's key, so this is the
+# opt-in demo, not the default. Forward flags with: make watch ARGS="--forever".
 watch:
-	uv run getting-started-agent --watch
+	uv run getting-started-agent --watch $(ARGS)
 
 test:
 	uv run pytest

@@ -36,6 +36,9 @@ MAX_TOKENS = 8192
 # user's key, so keep it slow enough to read and don't let a typo make it a tight loop.
 DEFAULT_INTERVAL = 15.0
 MIN_INTERVAL = 5.0
+# A --watch with no --for stops after this so an unattended run (left going overnight,
+# say) can't quietly burn tokens forever. --forever opts out when you're there to watch it.
+DEFAULT_DURATION = 3600.0
 IDENTITY_WORKED = "Authenticated to Keycard and exchanged a token, so the identity flow worked."
 AUTHENTICATED = "Authenticated to Keycard as the agent, but"
 
@@ -114,10 +117,14 @@ async def ask(graph: CompiledStateGraph) -> str:
     return result["messages"][-1].text
 
 
-async def watch(graph: CompiledStateGraph, interval: float) -> None:
-    """Ask on a loop until Ctrl-C. Each cycle is its own grant and exchange in the activity log;
-    a cycle that fails for a known reason prints why and the next one tries again."""
-    print(f"Watching PagerDuty every {interval:g}s. Ctrl-C to stop.", flush=True)
+async def watch(graph: CompiledStateGraph, interval: float, duration: float | None = None) -> None:
+    """Ask on a loop until Ctrl-C, or until `duration` seconds have elapsed when set, so a
+    background --watch doesn't run forever. Each cycle is its own grant and exchange in the
+    activity log; a cycle that fails for a known reason prints why and the next one tries again."""
+    window = "" if duration is None else f" for {duration:g}s"
+    print(f"Watching PagerDuty every {interval:g}s{window}. Ctrl-C to stop.", flush=True)
+    loop = asyncio.get_running_loop()
+    deadline = None if duration is None else loop.time() + duration
     while True:
         stamp = datetime.now().strftime("%H:%M:%S")
         try:
@@ -126,7 +133,9 @@ async def watch(graph: CompiledStateGraph, interval: float) -> None:
             if (explained := explain(e)) is None:
                 raise
             print(f"[{stamp}] {explained[1]}", flush=True)
-        await asyncio.sleep(interval)
+        if deadline is not None and loop.time() >= deadline:
+            return
+        await asyncio.sleep(interval if deadline is None else min(interval, deadline - loop.time()))
 
 
 @asynccontextmanager
@@ -144,19 +153,28 @@ async def once(settings: Settings) -> str:
         return await ask(graph)
 
 
-async def main(settings: Settings, *, interval: float | None = None) -> None:
-    """Ask once, or every `interval` seconds when watching."""
+async def main(
+    settings: Settings, *, interval: float | None = None, duration: float | None = None
+) -> None:
+    """Ask once, or every `interval` seconds when watching, stopping after `duration` if set."""
     if interval is None:
         print(await once(settings))
         return
     async with agent(settings) as graph:
-        await watch(graph, interval)
+        await watch(graph, interval, duration)
 
 
 def _interval(value: str) -> float:
     seconds = float(value)
     if not MIN_INTERVAL <= seconds < math.inf:
         raise argparse.ArgumentTypeError(f"must be at least {MIN_INTERVAL:g} seconds, got {value}")
+    return seconds
+
+
+def _duration(value: str) -> float:
+    seconds = float(value)
+    if not 0 < seconds < math.inf:
+        raise argparse.ArgumentTypeError(f"must be a positive number of seconds, got {value}")
     return seconds
 
 
@@ -170,16 +188,39 @@ def run() -> None:
         "--watch", action="store_true", help="Keep re-checking until Ctrl-C instead of once."
     )
     parser.add_argument(
+        "--forever",
+        action="store_true",
+        help="Watch with no time limit (overrides --for). Use only while you're watching it.",
+    )
+    parser.add_argument(
         "--interval",
         type=_interval,
         default=DEFAULT_INTERVAL,
         metavar="SECONDS",
         help=f"Seconds between checks with --watch (default: {DEFAULT_INTERVAL:g}).",
     )
+    parser.add_argument(
+        "--for",
+        dest="duration",
+        type=_duration,
+        default=DEFAULT_DURATION,
+        metavar="SECONDS",
+        help=(
+            f"Stop watching after this many seconds (default: {DEFAULT_DURATION:g}); "
+            "pass --forever to watch with no limit."
+        ),
+    )
     args = parser.parse_args()
     load_dotenv()
+    duration = None if args.forever else args.duration
     try:
-        asyncio.run(main(Settings.from_env(), interval=args.interval if args.watch else None))
+        asyncio.run(
+            main(
+                Settings.from_env(),
+                interval=args.interval if args.watch else None,
+                duration=duration if args.watch else None,
+            )
+        )
     except KeyboardInterrupt:
         pass  # Ctrl-C out of --watch is a clean stop.
     except Exception as e:
