@@ -61,10 +61,11 @@ class UnknownDependencyError(DependencyAccessError):
 
 
 class MissingDependencyError(DependencyAccessError):
-    """`access_denied` with no policy named: nothing permits the exchange. For an
-    agent acting as itself the zone's built-in policy permits only the resources
-    the agent declares as dependencies, so this is the state before the
-    dependency is added in the console."""
+    """`access_denied` with no policy named: no policy permits the exchange. The
+    zone's default policies permit an agent acting as itself only on the
+    resources it declares as dependencies, so in a starter zone this is the state
+    before the dependency is added in the console. A zone with custom policies
+    needs one that permits it instead."""
 
 
 class PolicyDeniedError(DependencyAccessError):
@@ -91,7 +92,7 @@ def _refusal(error: OAuthError, dependency_url: str) -> DependencyAccessError | 
         description = error.error_description or ""
         # The zone's machine-readable cause; older SDKs don't keep it.
         reason = getattr(error, "reason", None)
-        if reason == "dependency_missing":
+        if reason == "no_policy_matched":
             return MissingDependencyError(dependency_url, error.error)
         if reason == "policy_denied" or (reason is None and _POLICY_NAMED.search(description)):
             return PolicyDeniedError(dependency_url, error.error, " ".join(description.split()))
