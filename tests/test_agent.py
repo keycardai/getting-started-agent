@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 
 import anthropic
 import httpx
@@ -17,8 +18,11 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from getting_started_agent import keycard as keycard_module
 from getting_started_agent import main, vercel
 from getting_started_agent.config import (
+    ANTHROPIC,
+    ANTHROPIC_URL,
     CLIENT_CREDENTIALS,
     DEFAULT_MODEL,
+    DEPENDENCY,
     PAGERDUTY_URL,
     REQUIRED,
     Settings,
@@ -32,6 +36,7 @@ from getting_started_agent.keycard import (
     PolicyDeniedError,
     UnknownDependencyError,
     WorkloadIdentityError,
+    anthropic_api_key,
     dependency_token,
 )
 from getting_started_agent.pagerduty import MAX_INCIDENTS, PAGE_SIZE
@@ -42,7 +47,6 @@ ENV = {
     "KEYCARD_CLIENT_SECRET": "client-secret",
     "KEYCARD_RESOURCE_URL": "https://agent.example.com",
     "KEYCARD_DEPENDENCY_URL": "https://api.pagerduty.test",
-    "ANTHROPIC_API_KEY": "model-key",
 }
 
 INCIDENT = {
@@ -63,6 +67,8 @@ class FakeKeycard:
 
     async def client_credentials_grant(self, **kwargs) -> TokenResponse:
         self.calls.append(("client_credentials", kwargs))
+        if kwargs.get("resource") == ANTHROPIC_URL:
+            return TokenResponse(access_token="anthropic-key")
         return TokenResponse(access_token="own-token")
 
     async def exchange_token(self, **kwargs) -> TokenResponse:
@@ -106,8 +112,14 @@ def test_missing_settings_are_all_reported():
 def test_optional_settings_have_defaults():
     needed = {**REQUIRED, **CLIENT_CREDENTIALS}.values()
     defaults = Settings.from_env({k: v for k, v in ENV.items() if k in needed})
-    assert (defaults.dependency_url, defaults.model) == (PAGERDUTY_URL, DEFAULT_MODEL)
+    assert (defaults.dependency_url, defaults.anthropic_url, defaults.model) == (
+        PAGERDUTY_URL,
+        ANTHROPIC_URL,
+        DEFAULT_MODEL,
+    )
     assert Settings.from_env({**ENV, "ANTHROPIC_MODEL": "claude-x"}).model == "claude-x"
+    proxied = {**ENV, ANTHROPIC: "https://anthropic.proxy.test"}
+    assert Settings.from_env(proxied).anthropic_url == "https://anthropic.proxy.test"
 
 
 def test_dependency_url_echoing_the_agent_resource_falls_back_to_pagerduty(capsys):
@@ -127,7 +139,6 @@ def test_dependency_url_is_used_exactly_as_registered():
 def test_secrets_are_not_in_repr():
     settings = repr(Settings.from_env(ENV))
     assert ENV["KEYCARD_CLIENT_SECRET"] not in settings
-    assert ENV["ANTHROPIC_API_KEY"] not in settings
 
 
 @pytest.mark.parametrize(
@@ -135,8 +146,9 @@ def test_secrets_are_not_in_repr():
     [
         {"KEYCARD_ZONE_URL": "http://zone.keycard.test"},
         {"KEYCARD_DEPENDENCY_URL": "http://api.pagerduty.test"},
+        {"KEYCARD_ANTHROPIC_URL": "http://api.anthropic.test"},
     ],
-    ids=["plaintext-zone", "plaintext-dependency"],
+    ids=["plaintext-zone", "plaintext-dependency", "plaintext-anthropic"],
 )
 def test_rejects_settings_that_could_leak_credentials(overrides):
     with pytest.raises(SettingsError):
@@ -384,6 +396,7 @@ async def test_refused_exchange_is_classified_by_error_code(error, refusal):
 
     assert type(e.value) is refusal
     assert e.value.dependency_url == ENV["KEYCARD_DEPENDENCY_URL"]
+    assert e.value.variable == DEPENDENCY
     assert e.value.code == error.error
     # It got as far as the exchange, so the client-credentials grant ran first.
     assert [name for name, _ in keycard.calls] == ["client_credentials", "token_exchange"]
@@ -396,6 +409,139 @@ async def test_unreachable_zone_during_the_exchange_is_not_a_refusal():
 
     with pytest.raises(NetworkError):
         await dependency_token(Unreachable(), Settings.from_env(ENV))
+
+
+async def test_anthropic_key_is_one_grant_as_the_agent_with_no_exchange():
+    keycard = FakeKeycard()
+    assert await anthropic_api_key(keycard, Settings.from_env(ENV)) == "anthropic-key"
+    assert keycard.calls == [("client_credentials", {"resource": ANTHROPIC_URL})]
+
+
+async def test_on_fly_the_anthropic_fetch_carries_the_machine_token(monkeypatch):
+    async def fake_fly_token(audience: str) -> str:
+        return "fly-oidc-jwt"
+
+    monkeypatch.setattr(keycard_module, "fly_identity_token", fake_fly_token)
+    keycard = FakeKeycard()
+
+    assert await anthropic_api_key(keycard, Settings.from_env(FLY_ENV)) == "anthropic-key"
+    proof = {"client_assertion": "fly-oidc-jwt", "client_assertion_type": JWT_BEARER}
+    assert keycard.calls == [("client_credentials", {"resource": ANTHROPIC_URL, **proof})]
+
+
+@pytest.mark.parametrize(
+    ("error", "refusal"),
+    [
+        (refused("access_denied"), MissingDependencyError),
+        (refused("invalid_target"), UnknownDependencyError),
+    ],
+    ids=["no-dependency", "unknown-resource"],
+)
+async def test_refused_anthropic_fetch_names_the_resource_and_variable(error, refusal):
+    class Refusing(FakeKeycard):
+        async def client_credentials_grant(self, **kwargs) -> TokenResponse:
+            raise error
+
+    with pytest.raises(DependencyAccessError) as e:
+        await anthropic_api_key(Refusing(), Settings.from_env(ENV))
+
+    assert type(e.value) is refusal
+    assert e.value.dependency_url == ANTHROPIC_URL
+    assert e.value.variable == ANTHROPIC
+
+
+async def test_rejected_identity_during_the_anthropic_fetch_stays_an_oauth_error():
+    class Rejecting(FakeKeycard):
+        async def client_credentials_grant(self, **kwargs) -> TokenResponse:
+            raise refused("invalid_client")
+
+    with pytest.raises(OAuthProtocolError):
+        await anthropic_api_key(Rejecting(), Settings.from_env(ENV))
+
+
+@asynccontextmanager
+async def fake_connect(keycard: FakeKeycard):
+    yield keycard
+
+
+async def test_agent_builds_the_model_with_the_fetched_key(monkeypatch, capsys):
+    keycard = FakeKeycard()
+    monkeypatch.setattr(main, "connect", lambda settings: fake_connect(keycard))
+    built = []
+    monkeypatch.setattr(
+        main, "build_graph", lambda settings, kc, http, model: built.append(model) or "graph"
+    )
+
+    async with main.agent(Settings.from_env(ENV)) as graph:
+        assert graph == "graph"
+
+    [model] = built
+    assert model._client.api_key == "anthropic-key"
+    assert keycard.calls == [("client_credentials", {"resource": ANTHROPIC_URL})]
+    assert "Fetched the Anthropic key from Keycard" in capsys.readouterr().err
+
+
+async def test_a_refused_key_fetch_stops_the_run_before_the_graph_exists(monkeypatch):
+    class Refusing(FakeKeycard):
+        async def client_credentials_grant(self, **kwargs) -> TokenResponse:
+            raise refused("access_denied")
+
+    monkeypatch.setattr(main, "connect", lambda settings: fake_connect(Refusing()))
+
+    def no_graph(*args):
+        raise AssertionError("build_graph must not run")
+
+    monkeypatch.setattr(main, "build_graph", no_graph)
+    with pytest.raises(MissingDependencyError):
+        await main.once(Settings.from_env(ENV))
+
+
+async def test_a_refused_key_fetch_stops_watch_before_the_first_cycle(monkeypatch):
+    class Refusing(FakeKeycard):
+        async def client_credentials_grant(self, **kwargs) -> TokenResponse:
+            raise refused("access_denied")
+
+    monkeypatch.setattr(main, "connect", lambda settings: fake_connect(Refusing()))
+
+    async def no_watch(*args, **kwargs):
+        raise AssertionError("watch must not run")
+
+    monkeypatch.setattr(main, "watch", no_watch)
+    with pytest.raises(MissingDependencyError):
+        await main.main(Settings.from_env(ENV), interval=10)
+
+
+async def test_watch_fetches_the_key_once_across_cycles(monkeypatch, capsys):
+    keycard = FakeKeycard()
+    monkeypatch.setattr(main, "connect", lambda settings: fake_connect(keycard))
+
+    class Graph:
+        async def ainvoke(self, _):
+            return {"messages": [AIMessage("All quiet.")]}
+
+    monkeypatch.setattr(main, "build_graph", lambda *args: Graph())
+
+    class Stop(Exception):
+        pass
+
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 3:
+            raise Stop
+
+    monkeypatch.setattr(main.asyncio, "sleep", sleep)
+    with pytest.raises(Stop):
+        await main.main(Settings.from_env(ENV), interval=10)
+
+    anthropic_grants = [
+        kwargs
+        for name, kwargs in keycard.calls
+        if name == "client_credentials" and kwargs.get("resource") == ANTHROPIC_URL
+    ]
+    assert len(anthropic_grants) == 1
+    assert capsys.readouterr().out.count("All quiet.") == 3
 
 
 async def test_graph_reads_open_incidents_with_the_exchanged_key():
@@ -554,6 +700,16 @@ def test_unreachable_zone_says_so_instead_of_blaming_the_secret(run_failing, err
     assert "KEYCARD_CLIENT_SECRET" not in message
 
 
+def test_rejected_anthropic_key_points_at_the_stored_key(run_failing, capsys):
+    request = httpx.Request("POST", "https://api.anthropic.test/v1/messages")
+    response = httpx.Response(401, request=request)
+    run_failing(anthropic.AuthenticationError("bad key", response=response, body=None))
+
+    out = capsys.readouterr().out
+    assert "stored on the Anthropic resource in Keycard" in out
+    assert ".env" not in out
+
+
 @pytest.mark.parametrize("status", [401, 403])
 def test_rejected_key_is_a_clean_exit_that_points_at_the_key(run_failing, capsys, status):
     run_failing(status_error(status))
@@ -569,10 +725,10 @@ def test_ctrl_c_is_a_clean_stop(run_failing):
 
 
 def test_missing_setting_is_a_clean_exit(run_failing, monkeypatch, capsys):
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.delenv("KEYCARD_RESOURCE_URL")
     run_failing(AssertionError("main must not run"))
 
-    assert "`ANTHROPIC_API_KEY` isn't set. Add it to `.env`" in capsys.readouterr().out
+    assert "`KEYCARD_RESOURCE_URL` isn't set. Add it to `.env`" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

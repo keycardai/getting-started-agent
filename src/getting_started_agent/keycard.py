@@ -1,11 +1,14 @@
 """The agent's Keycard identity: a token as itself, exchanged for a dependency.
 
-Two requests to the zone's token endpoint, both authenticated as the agent's
+Three requests to the zone's token endpoint, all authenticated as the agent's
 Application:
 
-1. `client_credentials` with `resource` set to the agent's own resource. This
+1. `client_credentials` with `resource` set to the Anthropic resource. The
+   resource is backed by a vaulted API key, so the token is the agent's model
+   key. This runs once, before the graph is built.
+2. `client_credentials` with `resource` set to the agent's own resource. This
    is the agent proving who it is; no user is involved.
-2. RFC 8693 token exchange of that token for one scoped to the dependency.
+3. RFC 8693 token exchange of that token for one scoped to the dependency.
 
 How the agent proves who it is depends on where it runs. Locally it is a
 client id and secret from `.env`. Deployed, it is the host's identity: Fly
@@ -33,7 +36,7 @@ from keycardai.oauth import (
     TokenType,
 )
 
-from .config import Settings
+from .config import ANTHROPIC, DEPENDENCY, Settings
 
 JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 # Fly's per-Machine API, reachable only from inside the Machine.
@@ -41,25 +44,33 @@ FLY_API_SOCKET = "/.fly/api"
 
 
 class DependencyAccessError(Exception):
-    """The agent authenticated as itself, but Keycard refused to exchange that
-    token for the dependency.
+    """The agent authenticated as itself, but Keycard refused to grant it a
+    token for the resource (the dependency, or the Anthropic key).
 
-    The identity grant has already succeeded, so this is never a bad zone URL
-    or client secret (those fail the client-credentials grant first). The
-    subclasses name the refusals the zone reports, so the message can say what
-    to fix. `code` is the OAuth error code the zone returned.
+    The agent's identity has already been accepted, so this is never a bad zone
+    URL or client secret (those fail as an `invalid_client` OAuthError instead).
+    The subclasses name the refusals the zone reports, so the message can say
+    what to fix. `code` is the OAuth error code the zone returned. `variable`
+    is the `.env` variable that names the resource, for the message.
     """
 
-    def __init__(self, dependency_url: str, code: str, description: str | None = None) -> None:
+    def __init__(
+        self,
+        dependency_url: str,
+        code: str,
+        description: str | None = None,
+        variable: str = DEPENDENCY,
+    ) -> None:
         self.dependency_url = dependency_url
         self.code = code
         self.description = description
+        self.variable = variable
         super().__init__(dependency_url, code)
 
 
 class UnknownDependencyError(DependencyAccessError):
     """`invalid_target`: the zone has no resource at that URL, or the resource
-    has no API key stored to hand out."""
+    has no API key stored on it."""
 
 
 class MissingDependencyError(DependencyAccessError):
@@ -81,19 +92,23 @@ class PolicyDeniedError(DependencyAccessError):
 _POLICY_NAMED = re.compile(r"\bdenied by Polic(y|ies)\b|\bDetermining policies: ")
 
 
-def _refusal(error: OAuthError, dependency_url: str) -> DependencyAccessError | None:
-    """The exchange refusal `error` reports, or None if the zone didn't refuse it
+def _refusal(
+    error: OAuthError, dependency_url: str, variable: str = DEPENDENCY
+) -> DependencyAccessError | None:
+    """The refusal `error` reports, or None if the zone didn't refuse it
     (an unreachable zone, a malformed response)."""
     if not isinstance(error, OAuthProtocolError):
         return None
     if error.error == "invalid_target":
-        return UnknownDependencyError(dependency_url, error.error)
+        return UnknownDependencyError(dependency_url, error.error, variable=variable)
     if error.error == "access_denied":
         description = error.error_description or ""
         if _POLICY_NAMED.search(description):
-            return PolicyDeniedError(dependency_url, error.error, " ".join(description.split()))
-        return MissingDependencyError(dependency_url, error.error)
-    return DependencyAccessError(dependency_url, error.error)
+            return PolicyDeniedError(
+                dependency_url, error.error, " ".join(description.split()), variable=variable
+            )
+        return MissingDependencyError(dependency_url, error.error, variable=variable)
+    return DependencyAccessError(dependency_url, error.error, variable=variable)
 
 
 class WorkloadIdentityError(Exception):
@@ -180,3 +195,23 @@ async def dependency_token(client: TokenClient, settings: Settings) -> str:
             raise
         raise refusal from error
     return exchanged.access_token
+
+
+async def anthropic_api_key(client: TokenClient, settings: Settings) -> str:
+    """The vaulted Anthropic API key, fetched from the zone as the agent.
+
+    One `client_credentials` grant with `resource` set to the Anthropic
+    resource. The resource's credential provider returns the stored key as the
+    access token. An `access_denied` or `invalid_target` here means the zone
+    refused the resource, so it becomes the matching refusal. Other OAuth
+    errors (`invalid_client`, say) are about the agent's identity and propagate
+    as they are.
+    """
+    proof = await client_assertion(settings)
+    try:
+        grant = await client.client_credentials_grant(resource=settings.anthropic_url, **proof)
+    except OAuthProtocolError as error:
+        if error.error not in ("access_denied", "invalid_target"):
+            raise
+        raise _refusal(error, settings.anthropic_url, variable=ANTHROPIC) from error
+    return grant.access_token
