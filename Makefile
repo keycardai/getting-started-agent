@@ -13,7 +13,7 @@ install:
 	uv sync
 
 # One shot: fetch the model key, authenticate, exchange, read, summarize, exit.
-# Two model calls on the zone's Anthropic key, and three grants in the activity log.
+# Two model calls on the zone's Anthropic key, and three requests in the activity log (two grants and an exchange).
 dev:
 	uv run getting-started-agent
 

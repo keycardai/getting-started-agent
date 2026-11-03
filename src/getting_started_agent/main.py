@@ -52,7 +52,7 @@ def explain(error: Exception) -> tuple[bool, str] | None:
     if isinstance(error, MissingDependencyError):
         return True, (
             f"{AUTHENTICATED} it has no dependency on {error.dependency_url} yet, so Keycard "
-            "denied the exchange. Add that resource as a dependency of the agent in the "
+            "refused the token. Add that resource as a dependency of the agent in the "
             "Keycard console, then try again."
         )
     if isinstance(error, UnknownDependencyError):
@@ -64,13 +64,13 @@ def explain(error: Exception) -> tuple[bool, str] | None:
         )
     if isinstance(error, PolicyDeniedError):
         return False, (
-            f"{AUTHENTICATED} a policy in your zone denied the exchange for "
+            f"{AUTHENTICATED} a policy in your zone denied the token for "
             f"{error.dependency_url}: {error.description} "
             "Check that policy in the Keycard console."
         )
     if isinstance(error, DependencyAccessError):
         return False, (
-            f"{AUTHENTICATED} Keycard refused the exchange for {error.dependency_url} "
+            f"{AUTHENTICATED} Keycard refused the token for {error.dependency_url} "
             f"(`{error.code}`)."
         )
     if isinstance(error, httpx.HTTPStatusError):

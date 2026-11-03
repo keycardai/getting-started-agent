@@ -669,7 +669,7 @@ def test_policy_denial_says_a_policy_denied_it_not_to_add_a_dependency(run_faili
         run_failing(denial)
 
     message = str(e.value.code)
-    assert "a policy in your zone denied the exchange" in message
+    assert "a policy in your zone denied the token" in message
     assert '"no-weekend-pages"' in message
     assert "dependency" not in message
 
