@@ -5,21 +5,23 @@ VERCEL_ENV ?= production
 
 # Keys from .env that `make env-push` copies to Vercel. The deployed agent
 # authenticates with Vercel's OIDC workload identity, so the client id and
-# secret stay local. It refuses to start without the other three.
-DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL KEYCARD_RESOURCE_URL ANTHROPIC_API_KEY
+# secret stay local, and it fetches the Anthropic key from the zone, so no
+# model key is pushed. It refuses to start without the other two.
+DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL KEYCARD_RESOURCE_URL
 
 install:
 	uv sync
 
-# One shot: authenticate, exchange, read, summarize, exit. Two model calls on
-# the user's key, and one grant + exchange in the activity log.
+# One shot: fetch the model key, authenticate, exchange, read, summarize, exit.
+# Two model calls on the zone's Anthropic key, and three grants in the activity log.
 dev:
 	uv run getting-started-agent
 
-# The loop: re-runs the one shot every 15s, stopping after an hour (or Ctrl-C) so
-# an unattended run can't burn tokens overnight; pass --for SECONDS or --forever to
-# change the cap. Every cycle is a model call on the user's key, so this is the
-# opt-in demo, not the default. Forward flags with: make watch ARGS="--forever".
+# The loop: fetches the model key once, then re-runs the one shot every 15s,
+# stopping after an hour (or Ctrl-C) so an unattended run can't burn tokens
+# overnight. Pass --for SECONDS or --forever to change the cap. Every cycle is a
+# model call, so this is the opt-in demo, not the default. Forward flags with:
+# make watch ARGS="--forever".
 watch:
 	uv run getting-started-agent --watch $(ARGS)
 

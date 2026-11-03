@@ -24,16 +24,18 @@ from .keycard import (
     DependencyAccessError,
     MissingDependencyError,
     PolicyDeniedError,
+    TokenClient,
     UnknownDependencyError,
     WorkloadIdentityError,
+    anthropic_api_key,
     connect,
 )
 
 QUESTION = "What's open in PagerDuty right now?"
 # Room for the one-line-per-incident summary at pagerduty.MAX_INCIDENTS.
 MAX_TOKENS = 8192
-# Each --watch cycle is a Keycard grant, an exchange and a model call on the
-# user's key, so keep it slow enough to read and don't let a typo make it a tight loop.
+# Each --watch cycle is a Keycard grant, an exchange and a model call, so keep
+# it slow enough to read and don't let a typo make it a tight loop.
 DEFAULT_INTERVAL = 15.0
 MIN_INTERVAL = 5.0
 # A --watch with no --for stops after this so an unattended run (left going overnight,
@@ -56,9 +58,9 @@ def explain(error: Exception) -> tuple[bool, str] | None:
     if isinstance(error, UnknownDependencyError):
         return True, (
             f"{AUTHENTICATED} your zone has no resource at {error.dependency_url} with an "
-            "API key to hand out. Add PagerDuty as a dependency of the agent in the Keycard "
-            "console and store its API key, or fix `KEYCARD_DEPENDENCY_URL` if it points at "
-            "the wrong resource, then try again."
+            "API key stored on it. Add that resource as a dependency of the agent in the "
+            f"Keycard console and store its API key, or fix `{error.variable}` if it points "
+            "at the wrong resource, then try again."
         )
     if isinstance(error, PolicyDeniedError):
         return False, (
@@ -105,9 +107,15 @@ def explain(error: Exception) -> tuple[bool, str] | None:
             "that the Deploy step in the console registered this host's identity "
             "(on Fly the org, app and Machine name; on Vercel the team and project)."
         )
+    if isinstance(error, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return True, (
+            "Keycard granted the Anthropic key, but Anthropic rejected it: check the key "
+            "stored on the Anthropic resource in Keycard."
+        )
     if isinstance(error, anthropic.APIError):
         return False, (
-            "The model request failed. Check `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` in `.env`."
+            "The model request failed. Check `ANTHROPIC_MODEL` in `.env` and the Anthropic "
+            "key stored in Keycard."
         )
     return None
 
@@ -138,12 +146,24 @@ async def watch(graph: CompiledStateGraph, interval: float, duration: float | No
         await asyncio.sleep(interval if deadline is None else min(interval, deadline - loop.time()))
 
 
+async def preflight(keycard: TokenClient, settings: Settings) -> ChatAnthropic:
+    """The chat model, keyed with the Anthropic key the zone grants the agent.
+
+    The key is a prerequisite for the run: this runs before the graph is built,
+    so a refused grant stops the run before any model or PagerDuty call. The
+    key stays in this frame, as the PagerDuty key does in `graph.py`. A --watch
+    run fetches it once, not per cycle. The notice goes to stderr so stdout
+    stays the summary.
+    """
+    api_key = await anthropic_api_key(keycard, settings)
+    print("Fetched the Anthropic key from Keycard as the agent.", file=sys.stderr, flush=True)
+    return ChatAnthropic(model=settings.model, api_key=api_key, max_tokens=MAX_TOKENS)
+
+
 @asynccontextmanager
 async def agent(settings: Settings) -> AsyncIterator[CompiledStateGraph]:
-    model = ChatAnthropic(
-        model=settings.model, api_key=settings.anthropic_api_key, max_tokens=MAX_TOKENS
-    )
     async with connect(settings) as keycard, httpx.AsyncClient(timeout=15.0) as http:
+        model = await preflight(keycard, settings)
         yield build_graph(settings, keycard, http, model)
 
 
