@@ -13,7 +13,9 @@ signs in and no gateway sits in between.
   later, signed in to your zone (`keycard auth signin`). `keycard new agent`
   first shipped in v0.0.39 and doesn't appear in `keycard --help` yet.
 - Anthropic added as a dependency of the agent in the Keycard console, with an
-  Anthropic API key stored on it. The agent only supports Anthropic models: it
+  Anthropic API key stored on it: a Resource at `https://api.anthropic.com` on
+  the Zone Vault Provider, with the key as an API Token credential. The
+  onboarding guide's start step sets this up from the key you paste. The agent only supports Anthropic models: it
   uses `langchain-anthropic`, and another provider means changing the model in
   `src/getting_started_agent/main.py`.
 - PagerDuty added as a dependency of the agent in the Keycard console, with a
