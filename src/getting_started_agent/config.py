@@ -11,7 +11,6 @@ from urllib.parse import urlsplit
 REQUIRED = {
     "zone_url": "KEYCARD_ZONE_URL",
     "resource_url": "KEYCARD_RESOURCE_URL",
-    "anthropic_api_key": "ANTHROPIC_API_KEY",
 }
 # Local only. Deployed, the agent proves who it is with the host's identity
 # token instead, so no client secret leaves the laptop.
@@ -31,6 +30,10 @@ HOST_SECRETS = {
 VERCEL_OIDC_TOKEN = "VERCEL_OIDC_TOKEN"
 DEPENDENCY = "KEYCARD_DEPENDENCY_URL"
 PAGERDUTY_URL = "https://api.pagerduty.com"
+# The zone resource that holds the vaulted Anthropic API key. The agent fetches
+# the key from the zone as itself before each run, so no key lives in `.env`.
+ANTHROPIC = "KEYCARD_ANTHROPIC_URL"
+ANTHROPIC_URL = "https://api.anthropic.com"
 MODEL = "ANTHROPIC_MODEL"
 DEFAULT_MODEL = "claude-sonnet-5-5"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -58,7 +61,6 @@ def _require_https(name: str, url: str) -> None:
 class Settings:
     zone_url: str
     resource_url: str
-    anthropic_api_key: str = field(repr=False)
     # Either identifies the agent: a client id + secret locally, or, deployed,
     # the host's identity token.
     client_id: str | None = None
@@ -67,11 +69,13 @@ class Settings:
     host: str | None = None
     vercel_oidc_token: str | None = field(default=None, repr=False)
     dependency_url: str = PAGERDUTY_URL
+    anthropic_url: str = ANTHROPIC_URL
     model: str = DEFAULT_MODEL
 
     def __post_init__(self) -> None:
         _require_https(REQUIRED["zone_url"], self.zone_url)
         _require_https(DEPENDENCY, self.dependency_url)
+        _require_https(ANTHROPIC, self.anthropic_url)
         if not self.host and not (self.client_id and self.client_secret):
             raise SettingsError(
                 "The agent needs a client id and secret, or to run on Fly or Vercel."
@@ -99,8 +103,7 @@ class Settings:
             names = ", ".join(f"`{var}`" for var in missing)
             raise SettingsError(
                 f"`make dev` needs a few more things: {names} aren't set. "
-                "`keycard new agent` writes the KEYCARD_* ones to `.env`; "
-                f"add the rest there too, {RETRY}"
+                f"`keycard new agent` writes them to `.env`, {RETRY}"
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
         # A deployed agent may still carry a local .env's client id; the host's
@@ -124,5 +127,6 @@ class Settings:
             host=host,
             vercel_oidc_token=env.get(VERCEL_OIDC_TOKEN) if host == "vercel" else None,
             dependency_url=dependency or PAGERDUTY_URL,
+            anthropic_url=env.get(ANTHROPIC) or ANTHROPIC_URL,
             model=env.get(MODEL) or DEFAULT_MODEL,
         )

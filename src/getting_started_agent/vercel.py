@@ -5,8 +5,8 @@ Vercel sends each request an OIDC token in the `x-vercel-oidc-token` header.
 The agent presents it as its client assertion (`keycard.py`), so no client
 secret is deployed.
 
-Anyone who finds the URL can call it, and each call is a model request on
-your key. Set `CRON_SECRET` on the project to stop that: Vercel's Cron sends it
+Anyone who finds the URL can call it, and each call is a model request on the
+zone's key. Set `CRON_SECRET` on the project to stop that: Vercel's Cron sends it
 as a bearer token, and calls without it get a 401. The summary goes to the
 function logs (`vercel logs`), not the response, so the URL never shows your
 incidents.
