@@ -10,9 +10,9 @@ dependencies = [
     "anthropic>=1.16,<2.0",
     "httpx>=0.28,<1.0",
     "keycardai-oauth>=0.33.1,<0.34",
-    "langchain==1.4.7",
-    "langchain-anthropic==1.7.6",
-    "langgraph==1.2.18",
+    "langchain==1.4.8",
+    "langchain-anthropic==1.7.9",
+    "langgraph==1.2.19",
     "python-dotenv>=1.2,<2.0",
 ]
 
