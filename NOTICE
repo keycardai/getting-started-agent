@@ -952,13 +952,13 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------
-keycardai-oauth 0.33.1
+keycardai-oauth 0.33.2
 License: MIT
 
 This distribution ships no licence file.
 
 ----------------------------------------------------------------------------
-langchain 1.4.6
+langchain 1.4.7
 License: MIT
 
 MIT License
@@ -1010,7 +1010,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-langchain-core 1.6.12
+langchain-core 1.7.3
 License: MIT
 
 MIT License
@@ -1062,7 +1062,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-langgraph 1.2.16
+langgraph 1.2.18
 License: MIT
 
 MIT License

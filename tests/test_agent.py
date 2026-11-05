@@ -348,7 +348,7 @@ def refused(error: str, description: str | None = None) -> OAuthProtocolError:
     return OAuthProtocolError(error, description, operation="POST /token (exchange)")
 
 
-# The refusals svc-sts returns for an exchange, with the descriptions it sends.
+# The refusals the zone returns for an exchange, with the descriptions it sends.
 # A policy denial names the deciding policy; a denial with none named means no
 # policy permitted it, and for an agent acting as itself the zone's built-in
 # policy permits only its declared dependencies.

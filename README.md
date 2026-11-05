@@ -9,8 +9,9 @@ signs in and no gateway sits in between.
 
 - [uv](https://docs.astral.sh/uv/) and Python 3.11 or later. uv can install
   Python for you.
-- The [Keycard CLI](https://github.com/keycardai/cli/releases), v0.0.39 or
-  later, signed in to your zone (`keycard auth signin`). `keycard new agent`
+- The [Keycard CLI](https://docs.keycard.ai/cli/), v0.0.39 or
+  later (`brew install keycardai/tap/keycard`), signed in to your zone
+  (`keycard auth signin`). `keycard new agent`
   first shipped in v0.0.39 and doesn't appear in `keycard --help` yet.
 - Anthropic added as a dependency of the agent in the Keycard console, with an
   Anthropic API key stored on it: a Resource at `https://api.anthropic.com` on
