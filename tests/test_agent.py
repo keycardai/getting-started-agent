@@ -344,11 +344,17 @@ async def test_authenticates_as_self_then_exchanges_for_dependency():
     ]
 
 
-def refused(error: str, description: str | None = None) -> OAuthProtocolError:
-    return OAuthProtocolError(error, description, operation="POST /token (exchange)")
+def refused(
+    error: str, description: str | None = None, reason: str | None = None
+) -> OAuthProtocolError:
+    refusal = OAuthProtocolError(error, description, operation="POST /token (exchange)")
+    if reason is not None:
+        # Set after construction: keycardai-oauth before `reason` has no such argument.
+        refusal.reason = reason
+    return refusal
 
 
-# The refusals svc-sts returns for an exchange, with the descriptions it sends.
+# The refusals the zone returns for an exchange, with the descriptions it sends.
 # A policy denial names the deciding policy; a denial with none named means no
 # policy permitted it, and for an agent acting as itself the zone's built-in
 # policy permits only its declared dependencies.
@@ -369,6 +375,10 @@ NO_SECRET = "No secrets found for resource 'https://api.pagerduty.test'."
         (refused("access_denied"), MissingDependencyError),
         (refused("access_denied", FORBIDDEN), PolicyDeniedError),
         (refused("access_denied", FORBIDDEN_FALLBACK), PolicyDeniedError),
+        (refused("access_denied", NO_DEPENDENCY, "no_policy_matched"), MissingDependencyError),
+        (refused("access_denied", FORBIDDEN, "no_policy_matched"), MissingDependencyError),
+        (refused("access_denied", NO_DEPENDENCY, "policy_denied"), PolicyDeniedError),
+        (refused("access_denied", FORBIDDEN, "policy_denied"), PolicyDeniedError),
         (refused("invalid_target", UNKNOWN_RESOURCE), UnknownDependencyError),
         (refused("invalid_target", NO_SECRET), UnknownDependencyError),
         (refused("insufficient_authorization", "raw detail"), DependencyAccessError),
@@ -378,6 +388,10 @@ NO_SECRET = "No secrets found for resource 'https://api.pagerduty.test'."
         "no-description",
         "policy",
         "policy-fallback",
+        "reason-no-policy-matched",
+        "reason-wins-over-text-dependency",
+        "reason-wins-over-text-policy",
+        "reason-policy-denied",
         "unknown-resource",
         "no-api-key",
         "other-code",
@@ -650,8 +664,9 @@ def test_missing_dependency_is_a_clean_exit_that_points_at_adding_it(run_failing
 
     out = capsys.readouterr().out
     assert "Authenticated to Keycard as the agent" in out
-    assert "no dependency" in out
-    assert "Add that resource as a dependency" in out
+    assert "no policy in your zone permits" in out
+    assert "add that resource as a dependency" in out
+    assert "custom policies" in out
     assert ENV["KEYCARD_DEPENDENCY_URL"] in out
 
 

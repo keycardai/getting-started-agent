@@ -43,8 +43,10 @@ A run that fails for a known reason prints one line saying why:
   console.
 - **Anthropic rejected the stored key.** Keycard granted the key, but
   Anthropic returned 401. Check the key stored on the Anthropic resource.
-- **No PagerDuty dependency yet.** Keycard denied the exchange because the
-  agent has no dependency on PagerDuty. Add it in the console.
+- **No policy permits the PagerDuty exchange.** With the zone's default
+  policies, that means the agent has no dependency on PagerDuty yet. Add it in
+  the console. If your zone uses custom policies, check that one permits the
+  exchange.
 - **Denied by a policy.** The dependency exists, but a policy in your zone
   denied the exchange. The line names the policy.
 - **PagerDuty returned 404.** `KEYCARD_DEPENDENCY_URL` doesn't point at
