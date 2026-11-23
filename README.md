@@ -160,15 +160,22 @@ a Hobby plan allows; Pro allows down to every minute):
 
 ```sh
 vercel link
+```
+
+Register the deployment in the console's Deploy step (team slug and project
+name) before deploying. Keycard then shows the workload client ID. Add it to
+`.env` as `KEYCARD_WORKLOAD_CLIENT_ID`, then push the Keycard values together
+and deploy once:
+
+```sh
 make env-push
 vercel deploy --prod
 ```
 
 Vercel sends each request an OIDC token whose subject is
 `owner:<team>:project:<project>:environment:production`, which the Deploy step
-registers the same way. Only production deployments match it. Keycard then
-shows the workload client ID: add it to `.env` as `KEYCARD_WORKLOAD_CLIENT_ID`,
-run `make env-push` again, and redeploy with `vercel deploy --prod`. To run a cycle
+registers the same way. Only production deployments match it, and nothing in it
+depends on a deploy having run, which is why registering can come first. To run a cycle
 now: `curl https://<project>.vercel.app/api/run`. The response only says whether
 it ran; the summary is in `vercel logs`. Anyone with the URL can call it, and
 each call is a model request on the zone's key, so set `CRON_SECRET` on the project
@@ -194,7 +201,8 @@ When `.env` has `KEYCARD_WORKLOAD_CLIENT_ID`, `make env-push` sends it as
 `KEYCARD_CLIENT_ID`. It never sends the local `KEYCARD_CLIENT_ID` or
 `KEYCARD_CLIENT_SECRET`, because the deployed agent authenticates with Vercel's
 workload identity.
-Redeploy after it runs. `VERCEL_ENV=preview` targets another environment.
+Deploy after it runs; a running deployment keeps the values it started with.
+`VERCEL_ENV=preview` targets another environment.
 
 ## License
 
