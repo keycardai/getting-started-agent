@@ -115,7 +115,7 @@ to `.env` and fill it in:
 | `KEYCARD_ZONE_URL` | Your zone, e.g. `https://<zone-id>.keycard.cloud` |
 | `KEYCARD_CLIENT_ID` / `KEYCARD_CLIENT_SECRET` | The agent application's credentials, for running locally |
 | `KEYCARD_RESOURCE_URL` | The agent's own resource |
-| `KEYCARD_WORKLOAD_CLIENT_ID` | The deployment's workload client ID, which Keycard shows after you register the deployment. Read only by `make env-push` |
+| `KEYCARD_WORKLOAD_CLIENT_ID` | The deployment's workload client ID, which Keycard shows after you register the deployment. Read only by `make env-push` and `make fly-secrets` |
 | `KEYCARD_DEPENDENCY_URL` | Optional PagerDuty resource, defaults to `https://api.pagerduty.com` |
 | `KEYCARD_ANTHROPIC_URL` | Optional Anthropic resource holding the vaulted model key, defaults to `https://api.anthropic.com` |
 | `ANTHROPIC_MODEL` | Optional, defaults to `claude-sonnet-5-5` |
@@ -137,12 +137,13 @@ Machine name `agent`). Keycard then shows the workload client ID. Add it to
 and start the Machine:
 
 ```sh
-fly secrets set --stage \
-  KEYCARD_ZONE_URL="$(grep ^KEYCARD_ZONE_URL= .env | cut -d= -f2-)" \
-  KEYCARD_RESOURCE_URL="$(grep ^KEYCARD_RESOURCE_URL= .env | cut -d= -f2-)" \
-  KEYCARD_CLIENT_ID="$(grep ^KEYCARD_WORKLOAD_CLIENT_ID= .env | cut -d= -f2-)"
+make fly-secrets
 fly machine run . --name agent --schedule hourly --restart no
 ```
+
+`make fly-secrets` stages `KEYCARD_ZONE_URL` and `KEYCARD_RESOURCE_URL`, and
+sends `KEYCARD_WORKLOAD_CLIENT_ID` as `KEYCARD_CLIENT_ID`. It reads `.env` the
+same way `make env-push` does, and stages nothing if any value is missing.
 
 `--restart no` matters: Fly otherwise restarts a Machine that exits non-zero,
 and each retry that gets as far as the model is another call on the zone's key.
@@ -203,6 +204,8 @@ When `.env` has `KEYCARD_WORKLOAD_CLIENT_ID`, `make env-push` sends it as
 workload identity.
 Deploy after it runs; a running deployment keeps the values it started with.
 `VERCEL_ENV=preview` targets another environment.
+
+For Fly, `make fly-secrets` stages the same keys as app secrets.
 
 ## License
 

@@ -1,13 +1,15 @@
 .PHONY: install dev watch test lint format checks check-licenses \
-        notice check-notice licenses-allowed env-push env-pull env-list
+        notice check-notice licenses-allowed env-push env-pull env-list \
+        fly-secrets
 
 VERCEL_ENV ?= production
 
-# Keys from .env that `make env-push` copies to Vercel. The deployed agent
-# authenticates with Vercel's OIDC workload identity, so the client secret
-# stays local, and it fetches the Anthropic key from the zone, so no model key
-# is pushed. It refuses to start without the other two. env-push also sends
-# KEYCARD_WORKLOAD_CLIENT_ID, when .env has it, as KEYCARD_CLIENT_ID.
+# Keys from .env that `make env-push` copies to Vercel and `make fly-secrets`
+# stages on Fly. The deployed agent authenticates with the host's OIDC workload
+# identity, so the client secret stays local, and it fetches the Anthropic key
+# from the zone, so no model key is pushed. It refuses to start without the
+# other two. Both targets also send KEYCARD_WORKLOAD_CLIENT_ID as
+# KEYCARD_CLIENT_ID.
 DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL KEYCARD_RESOURCE_URL
 
 install:
@@ -69,3 +71,7 @@ env-pull:
 env-list:
 	@command -v vercel >/dev/null 2>&1 || { echo "vercel not found. Install it with: npm i -g vercel"; exit 1; }
 	vercel env ls $(VERCEL_ENV)
+
+# Stage DEPLOY_ENV_VARS and the workload client ID from .env as Fly secrets.
+fly-secrets:
+	@DEPLOY_ENV_VARS="$(DEPLOY_ENV_VARS)" ./scripts/fly-secrets.sh
