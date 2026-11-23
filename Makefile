@@ -4,9 +4,10 @@
 VERCEL_ENV ?= production
 
 # Keys from .env that `make env-push` copies to Vercel. The deployed agent
-# authenticates with Vercel's OIDC workload identity, so the client id and
-# secret stay local, and it fetches the Anthropic key from the zone, so no
-# model key is pushed. It refuses to start without the other two.
+# authenticates with Vercel's OIDC workload identity, so the client secret
+# stays local, and it fetches the Anthropic key from the zone, so no model key
+# is pushed. It refuses to start without the other two. env-push also sends
+# KEYCARD_WORKLOAD_CLIENT_ID, when .env has it, as KEYCARD_CLIENT_ID.
 DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL KEYCARD_RESOURCE_URL
 
 install:

@@ -115,6 +115,7 @@ to `.env` and fill it in:
 | `KEYCARD_ZONE_URL` | Your zone, e.g. `https://<zone-id>.keycard.cloud` |
 | `KEYCARD_CLIENT_ID` / `KEYCARD_CLIENT_SECRET` | The agent application's credentials, for running locally |
 | `KEYCARD_RESOURCE_URL` | The agent's own resource |
+| `KEYCARD_WORKLOAD_CLIENT_ID` | The deployment's workload client ID, which Keycard shows after you register the deployment. Read only by `make env-push` |
 | `KEYCARD_DEPENDENCY_URL` | Optional PagerDuty resource, defaults to `https://api.pagerduty.com` |
 | `KEYCARD_ANTHROPIC_URL` | Optional Anthropic resource holding the vaulted model key, defaults to `https://api.anthropic.com` |
 | `ANTHROPIC_MODEL` | Optional, defaults to `claude-sonnet-5-5` |
@@ -128,7 +129,18 @@ client secret. On Fly it is a scheduled Machine (`fly.toml`, `Dockerfile`):
 
 ```sh
 fly launch --no-deploy
-fly secrets set --stage KEYCARD_ZONE_URL=... KEYCARD_RESOURCE_URL=...
+```
+
+Register the deployment in the console's Deploy step (org slug, app name, and
+Machine name `agent`). Keycard then shows the workload client ID. Add it to
+`.env` as `KEYCARD_WORKLOAD_CLIENT_ID`, then stage the Keycard values together
+and start the Machine:
+
+```sh
+fly secrets set --stage \
+  KEYCARD_ZONE_URL="$(grep ^KEYCARD_ZONE_URL= .env | cut -d= -f2-)" \
+  KEYCARD_RESOURCE_URL="$(grep ^KEYCARD_RESOURCE_URL= .env | cut -d= -f2-)" \
+  KEYCARD_CLIENT_ID="$(grep ^KEYCARD_WORKLOAD_CLIENT_ID= .env | cut -d= -f2-)"
 fly machine run . --name agent --schedule hourly --restart no
 ```
 
@@ -138,7 +150,8 @@ and each retry that gets as far as the model is another call on the zone's key.
 Fly issues every Machine an OIDC token whose subject is `<org>:<app>:<machine>`.
 The Deploy step in the Keycard console registers that subject as a workload
 identity credential on the agent's application, and the agent presents the
-token as a client assertion on each request (`keycard.py`). The Machine name
+token as a client assertion on each request (`keycard.py`), naming that
+credential with `KEYCARD_CLIENT_ID`. The Machine name
 is part of the subject, so it has to match what you told the console. To run a
 cycle now instead of waiting for the hour: `fly machine start $(fly machine list -q)`.
 
@@ -153,7 +166,9 @@ vercel deploy --prod
 
 Vercel sends each request an OIDC token whose subject is
 `owner:<team>:project:<project>:environment:production`, which the Deploy step
-registers the same way. Only production deployments match it. To run a cycle
+registers the same way. Only production deployments match it. Keycard then
+shows the workload client ID: add it to `.env` as `KEYCARD_WORKLOAD_CLIENT_ID`,
+run `make env-push` again, and redeploy with `vercel deploy --prod`. To run a cycle
 now: `curl https://<project>.vercel.app/api/run`. The response only says whether
 it ran; the summary is in `vercel logs`. Anyone with the URL can call it, and
 each call is a model request on the zone's key, so set `CRON_SECRET` on the project
@@ -175,8 +190,10 @@ make env-pull   # pull the Vercel environment into .env.local
 make env-list   # list the environment set on the Vercel project
 ```
 
-`make env-push` doesn't send `KEYCARD_CLIENT_ID` or `KEYCARD_CLIENT_SECRET`,
-because the deployed agent authenticates with Vercel's workload identity.
+When `.env` has `KEYCARD_WORKLOAD_CLIENT_ID`, `make env-push` sends it as
+`KEYCARD_CLIENT_ID`. It never sends the local `KEYCARD_CLIENT_ID` or
+`KEYCARD_CLIENT_SECRET`, because the deployed agent authenticates with Vercel's
+workload identity.
 Redeploy after it runs. `VERCEL_ENV=preview` targets another environment.
 
 ## License

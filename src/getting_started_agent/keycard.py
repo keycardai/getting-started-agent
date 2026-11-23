@@ -16,7 +16,8 @@ issues each Machine an OIDC token (``sub`` is ``<org>:<app>:<machine>``) and
 Vercel sends one with each request (``sub`` is
 ``owner:<team>:project:<project>:environment:production``). The console's
 Deploy step registered that subject as a workload credential, and the agent
-presents the token as an RFC 7523 client assertion. No secret ships.
+presents the token as an RFC 7523 client assertion, with the workload client
+ID the Deploy step showed as `client_id`. No secret ships.
 
 Each request appears in the zone's activity log with the agent as the actor.
 """
@@ -172,8 +173,10 @@ async def client_assertion(settings: Settings) -> dict[str, Any]:
     """Extra token-request parameters that prove the agent's identity to the
     zone when it is deployed; empty when a client secret does.
 
-    The zone resolves the credential by the assertion's issuer and subject, so
-    no client id travels with it.
+    A v2 workload credential is looked up by its client id, so the zone rejects
+    an assertion without one as `invalid_client`. A v1 credential is looked up
+    by the assertion's issuer and subject and rejects a client id, so none is
+    sent when `KEYCARD_CLIENT_ID` is unset.
     """
     if settings.host == "fly":
         token = await fly_identity_token(settings.zone_url)
@@ -181,7 +184,10 @@ async def client_assertion(settings: Settings) -> dict[str, Any]:
         token = vercel_identity_token(settings)
     else:
         return {}
-    return {"client_assertion": token, "client_assertion_type": JWT_BEARER}
+    proof = {"client_assertion": token, "client_assertion_type": JWT_BEARER}
+    if settings.client_id:
+        proof["client_id"] = settings.client_id
+    return proof
 
 
 async def dependency_token(client: TokenClient, settings: Settings) -> str:

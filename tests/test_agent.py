@@ -223,7 +223,7 @@ async def test_on_fly_both_requests_carry_the_machine_token(monkeypatch):
             },
         ),
     ]
-    # And no client id went over the wire: the zone resolves it from the token.
+    # Without a workload client id, none goes over the wire, as a v1 credential needs.
     assert not any("client_id" in kwargs for _, kwargs in keycard.calls)
 
 
@@ -268,6 +268,20 @@ async def test_on_vercel_a_missing_token_is_a_workload_identity_error():
     settings = Settings.from_env({k: v for k, v in VERCEL_ENV.items() if k != "VERCEL_OIDC_TOKEN"})
     with pytest.raises(WorkloadIdentityError):
         await dependency_token(FakeKeycard(), settings)
+
+
+@pytest.mark.parametrize("env", [FLY_ENV, VERCEL_ENV], ids=["fly", "vercel"])
+async def test_deployed_requests_name_the_workload_client_id(monkeypatch, env):
+    async def fake_fly_token(audience: str) -> str:
+        return "fly-oidc-jwt"
+
+    monkeypatch.setattr(keycard_module, "fly_identity_token", fake_fly_token)
+    keycard = FakeKeycard()
+    settings = Settings.from_env({**env, "KEYCARD_CLIENT_ID": "workload-cred"})
+    await anthropic_api_key(keycard, settings)
+    await dependency_token(keycard, settings)
+    assert [kwargs.get("client_id") for _, kwargs in keycard.calls] == ["workload-cred"] * 3
+    assert settings.client_secret is None
 
 
 @pytest.fixture

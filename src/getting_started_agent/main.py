@@ -107,7 +107,8 @@ def explain(error: Exception) -> tuple[bool, str] | None:
             "Keycard didn't issue a token. Locally, check `KEYCARD_ZONE_URL`, "
             "`KEYCARD_CLIENT_ID` and `KEYCARD_CLIENT_SECRET` in `.env`. Deployed, check "
             "that the Deploy step in the console registered this host's identity "
-            "(on Fly the org, app and Machine name; on Vercel the team and project)."
+            "(on Fly the org, app and Machine name; on Vercel the team and project), "
+            "and that `KEYCARD_CLIENT_ID` on the host is the workload client ID it showed."
         )
     if isinstance(error, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
         return True, (
