@@ -12,8 +12,11 @@ REQUIRED = {
     "zone_url": "KEYCARD_ZONE_URL",
     "resource_url": "KEYCARD_RESOURCE_URL",
 }
-# Local only. Deployed, the agent proves who it is with the host's identity
-# token instead, so no client secret leaves the laptop.
+# Locally, the application's client id and secret. Deployed, the agent proves
+# who it is with the host's identity token instead, so no client secret leaves
+# the laptop; KEYCARD_CLIENT_ID on the host is the workload client ID the
+# console's Deploy step showed, which names the credential the token is checked
+# against.
 CLIENT_CREDENTIALS = {
     "client_id": "KEYCARD_CLIENT_ID",
     "client_secret": "KEYCARD_CLIENT_SECRET",
@@ -62,7 +65,7 @@ class Settings:
     zone_url: str
     resource_url: str
     # Either identifies the agent: a client id + secret locally, or, deployed,
-    # the host's identity token.
+    # the host's identity token named by its workload client id.
     client_id: str | None = None
     client_secret: str | None = field(default=None, repr=False)
     # "fly" or "vercel" when deployed, None locally.
@@ -106,10 +109,12 @@ class Settings:
                 f"`keycard new agent` writes them to `.env`, {RETRY}"
             )
         values = {name: env[var] for name, var in REQUIRED.items()}
-        # A deployed agent may still carry a local .env's client id; the host's
-        # identity wins, so the secret is never sent even if it was shipped.
+        # Deployed, the host's identity replaces the secret, so it is never sent
+        # even if a local .env was shipped. The client id stays: it is the
+        # workload client id that names the credential.
         credentials = {
-            name: None if host else env.get(var) or None for name, var in CLIENT_CREDENTIALS.items()
+            name: None if host and name == "client_secret" else env.get(var) or None
+            for name, var in CLIENT_CREDENTIALS.items()
         }
         # `keycard new agent` can write the agent's own resource here. That's what the agent
         # *is*, not what it reads, so say so and read PagerDuty instead.

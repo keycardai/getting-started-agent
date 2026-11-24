@@ -128,9 +128,23 @@ client secret. On Fly it is a scheduled Machine (`fly.toml`, `Dockerfile`):
 
 ```sh
 fly launch --no-deploy
-fly secrets set --stage KEYCARD_ZONE_URL=... KEYCARD_RESOURCE_URL=...
+```
+
+Register the deployment in the console's Deploy step (org slug, app name, and
+Machine name `agent`). The console then gives you one command with the
+workload client ID filled in. It stages `KEYCARD_ZONE_URL` and
+`KEYCARD_RESOURCE_URL` from `.env` and the workload client ID as
+`KEYCARD_CLIENT_ID`, then starts the Machine:
+
+```sh
+make fly-secrets
+fly secrets set --stage KEYCARD_CLIENT_ID=<workload-client-id>
 fly machine run . --name agent --schedule hourly --restart no
 ```
+
+If the Machine already exists, the console's command runs
+`fly machine update <machine-id> --yes --skip-start` instead, so it keeps its
+schedule and picks up the new secrets at its next run.
 
 `--restart no` matters: Fly otherwise restarts a Machine that exits non-zero,
 and each retry that gets as far as the model is another call on the zone's key.
@@ -138,7 +152,8 @@ and each retry that gets as far as the model is another call on the zone's key.
 Fly issues every Machine an OIDC token whose subject is `<org>:<app>:<machine>`.
 The Deploy step in the Keycard console registers that subject as a workload
 identity credential on the agent's application, and the agent presents the
-token as a client assertion on each request (`keycard.py`). The Machine name
+token as a client assertion on each request (`keycard.py`), naming that
+credential with `KEYCARD_CLIENT_ID`. The Machine name
 is part of the subject, so it has to match what you told the console. To run a
 cycle now instead of waiting for the hour: `fly machine start $(fly machine list -q)`.
 
@@ -147,13 +162,24 @@ a Hobby plan allows; Pro allows down to every minute):
 
 ```sh
 vercel link
+```
+
+Register the deployment in the console's Deploy step (team slug and project
+name) before deploying. The console then gives you one command with the
+workload client ID filled in. It pushes `KEYCARD_ZONE_URL` and
+`KEYCARD_RESOURCE_URL` from `.env`, sets the workload client ID as
+`KEYCARD_CLIENT_ID`, then deploys once:
+
+```sh
 make env-push
+printf '%s' <workload-client-id> | vercel env add KEYCARD_CLIENT_ID production --force
 vercel deploy --prod
 ```
 
 Vercel sends each request an OIDC token whose subject is
 `owner:<team>:project:<project>:environment:production`, which the Deploy step
-registers the same way. Only production deployments match it. To run a cycle
+registers the same way. Only production deployments match it, and nothing in it
+depends on a deploy having run, which is why registering can come first. To run a cycle
 now: `curl https://<project>.vercel.app/api/run`. The response only says whether
 it ran; the summary is in `vercel logs`. Anyone with the URL can call it, and
 each call is a model request on the zone's key, so set `CRON_SECRET` on the project
@@ -175,9 +201,14 @@ make env-pull   # pull the Vercel environment into .env.local
 make env-list   # list the environment set on the Vercel project
 ```
 
-`make env-push` doesn't send `KEYCARD_CLIENT_ID` or `KEYCARD_CLIENT_SECRET`,
-because the deployed agent authenticates with Vercel's workload identity.
-Redeploy after it runs. `VERCEL_ENV=preview` targets another environment.
+`make env-push` never sends the local `KEYCARD_CLIENT_ID` or
+`KEYCARD_CLIENT_SECRET`: the deployed agent authenticates with Vercel's
+workload identity, and its `KEYCARD_CLIENT_ID` is the workload client ID, which
+the console's Deploy step sets. Deploy after it runs; a running deployment
+keeps the values it started with.
+`VERCEL_ENV=preview` targets another environment.
+
+For Fly, `make fly-secrets` stages the same keys as app secrets.
 
 ## License
 
