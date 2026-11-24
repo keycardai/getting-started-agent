@@ -115,7 +115,6 @@ to `.env` and fill it in:
 | `KEYCARD_ZONE_URL` | Your zone, e.g. `https://<zone-id>.keycard.cloud` |
 | `KEYCARD_CLIENT_ID` / `KEYCARD_CLIENT_SECRET` | The agent application's credentials, for running locally |
 | `KEYCARD_RESOURCE_URL` | The agent's own resource |
-| `KEYCARD_WORKLOAD_CLIENT_ID` | The deployment's workload client ID, which Keycard shows after you register the deployment. Read only by `make env-push` and `make fly-secrets` |
 | `KEYCARD_DEPENDENCY_URL` | Optional PagerDuty resource, defaults to `https://api.pagerduty.com` |
 | `KEYCARD_ANTHROPIC_URL` | Optional Anthropic resource holding the vaulted model key, defaults to `https://api.anthropic.com` |
 | `ANTHROPIC_MODEL` | Optional, defaults to `claude-sonnet-5-5` |
@@ -132,18 +131,20 @@ fly launch --no-deploy
 ```
 
 Register the deployment in the console's Deploy step (org slug, app name, and
-Machine name `agent`). Keycard then shows the workload client ID. Add it to
-`.env` as `KEYCARD_WORKLOAD_CLIENT_ID`, then stage the Keycard values together
-and start the Machine:
+Machine name `agent`). The console then gives you one command with the
+workload client ID filled in. It stages `KEYCARD_ZONE_URL` and
+`KEYCARD_RESOURCE_URL` from `.env` and the workload client ID as
+`KEYCARD_CLIENT_ID`, then starts the Machine:
 
 ```sh
 make fly-secrets
+fly secrets set --stage KEYCARD_CLIENT_ID=<workload-client-id>
 fly machine run . --name agent --schedule hourly --restart no
 ```
 
-`make fly-secrets` stages `KEYCARD_ZONE_URL` and `KEYCARD_RESOURCE_URL`, and
-sends `KEYCARD_WORKLOAD_CLIENT_ID` as `KEYCARD_CLIENT_ID`. It reads `.env` the
-same way `make env-push` does, and stages nothing if any value is missing.
+If the Machine already exists, the console's command runs
+`fly machine update <machine-id> --yes --skip-start` instead, so it keeps its
+schedule and picks up the new secrets at its next run.
 
 `--restart no` matters: Fly otherwise restarts a Machine that exits non-zero,
 and each retry that gets as far as the model is another call on the zone's key.
@@ -164,12 +165,14 @@ vercel link
 ```
 
 Register the deployment in the console's Deploy step (team slug and project
-name) before deploying. Keycard then shows the workload client ID. Add it to
-`.env` as `KEYCARD_WORKLOAD_CLIENT_ID`, then push the Keycard values together
-and deploy once:
+name) before deploying. The console then gives you one command with the
+workload client ID filled in. It pushes `KEYCARD_ZONE_URL` and
+`KEYCARD_RESOURCE_URL` from `.env`, sets the workload client ID as
+`KEYCARD_CLIENT_ID`, then deploys once:
 
 ```sh
 make env-push
+printf '%s' <workload-client-id> | vercel env add KEYCARD_CLIENT_ID production --force
 vercel deploy --prod
 ```
 
@@ -198,11 +201,11 @@ make env-pull   # pull the Vercel environment into .env.local
 make env-list   # list the environment set on the Vercel project
 ```
 
-When `.env` has `KEYCARD_WORKLOAD_CLIENT_ID`, `make env-push` sends it as
-`KEYCARD_CLIENT_ID`. It never sends the local `KEYCARD_CLIENT_ID` or
-`KEYCARD_CLIENT_SECRET`, because the deployed agent authenticates with Vercel's
-workload identity.
-Deploy after it runs; a running deployment keeps the values it started with.
+`make env-push` never sends the local `KEYCARD_CLIENT_ID` or
+`KEYCARD_CLIENT_SECRET`: the deployed agent authenticates with Vercel's
+workload identity, and its `KEYCARD_CLIENT_ID` is the workload client ID, which
+the console's Deploy step sets. Deploy after it runs; a running deployment
+keeps the values it started with.
 `VERCEL_ENV=preview` targets another environment.
 
 For Fly, `make fly-secrets` stages the same keys as app secrets.

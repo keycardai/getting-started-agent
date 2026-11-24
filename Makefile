@@ -8,8 +8,8 @@ VERCEL_ENV ?= production
 # stages on Fly. The deployed agent authenticates with the host's OIDC workload
 # identity, so the client secret stays local, and it fetches the Anthropic key
 # from the zone, so no model key is pushed. It refuses to start without the
-# other two. Both targets also send KEYCARD_WORKLOAD_CLIENT_ID as
-# KEYCARD_CLIENT_ID.
+# other two. The host's KEYCARD_CLIENT_ID is the workload client ID, which the
+# console's Deploy step sets.
 DEPLOY_ENV_VARS ?= KEYCARD_ZONE_URL KEYCARD_RESOURCE_URL
 
 install:
@@ -72,6 +72,6 @@ env-list:
 	@command -v vercel >/dev/null 2>&1 || { echo "vercel not found. Install it with: npm i -g vercel"; exit 1; }
 	vercel env ls $(VERCEL_ENV)
 
-# Stage DEPLOY_ENV_VARS and the workload client ID from .env as Fly secrets.
+# Stage DEPLOY_ENV_VARS from .env as Fly secrets.
 fly-secrets:
 	@DEPLOY_ENV_VARS="$(DEPLOY_ENV_VARS)" ./scripts/fly-secrets.sh
